@@ -1,0 +1,119 @@
+import { useMemo, useEffect } from 'react'
+import { Lock, RefreshCw, ChevronDown } from 'lucide-react'
+import { motion, AnimatePresence } from 'framer-motion'
+import * as Select from '@radix-ui/react-select'
+import { useForm } from 'react-hook-form'
+import { z } from 'zod'
+import { zodResolver } from '@hookform/resolvers/zod'
+import { useSettingsQuery, useSettingsSaver } from '../hooks/useSettings'
+import { availableChatModels } from '../utils/models'
+
+const formSchema = z.object({
+	openaiApiKey: z.string().optional(),
+	openaiModel: z.string().min(3, 'Model is required'),
+	memoryTurnCount: z.number().int().min(1).max(10),
+})
+
+type SettingsFormValues = z.infer<typeof formSchema>
+
+export function SettingsPanel() {
+	const { data: settings } = useSettingsQuery()
+	const saver = useSettingsSaver()
+	const form = useForm<SettingsFormValues>({
+		resolver: zodResolver(formSchema),
+		defaultValues: { openaiApiKey: '', openaiModel: 'gpt-4.1-mini', memoryTurnCount: 4 },
+	})
+
+	useEffect(() => {
+		if (settings) {
+			form.reset({
+				openaiApiKey: settings.openaiApiKey ?? '',
+				openaiModel: settings.openaiModel ?? 'gpt-4.1-mini',
+				memoryTurnCount: settings.memoryTurnCount ?? 4,
+			})
+		}
+	}, [settings, form])
+
+	const handleSubmit = form.handleSubmit(async (values) => {
+		await saver.mutateAsync(values)
+	})
+
+	const modelOptions = useMemo(() => availableChatModels, [])
+	const currentModel = form.watch('openaiModel') ?? 'gpt-4.1-mini'
+
+	return (
+		<section className="rounded-3xl border border-white/10 bg-gradient-to-br from-slate-900 to-slate-950 p-5 text-white">
+			<header className="flex items-center justify-between">
+				<div>
+					<p className="text-xs uppercase tracking-[0.4em] text-white/70">API Access</p>
+					<h2 className="text-xl font-semibold">OpenAI Settings</h2>
+				</div>
+				<Lock className="h-5 w-5 text-white/70" />
+			</header>
+
+			<form onSubmit={handleSubmit} className="mt-4 space-y-4">
+				<label className="block text-sm">
+					<span className="text-xs uppercase tracking-[0.3em] text-white/60">API Key</span>
+					<input
+						type="password"
+						placeholder="sk-..."
+						{...form.register('openaiApiKey')}
+						className="mt-1 w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-2 text-sm focus:border-purple-400 focus:outline-none"
+					/>
+				</label>
+
+				<label className="block text-sm">
+					<span className="text-xs uppercase tracking-[0.3em] text-white/60">Model</span>
+					<Select.Root value={currentModel} onValueChange={(value: string) => form.setValue('openaiModel', value, { shouldDirty: true })}>
+						<Select.Trigger className="mt-1 flex w-full items-center justify-between rounded-2xl border border-white/10 bg-black/30 px-4 py-2 text-sm focus:border-purple-400 focus:outline-none">
+							<Select.Value placeholder="Pick a model" />
+							<Select.Icon>
+								<ChevronDown className="h-4 w-4" />
+							</Select.Icon>
+						</Select.Trigger>
+						<AnimatePresence>
+							<Select.Portal>
+								<Select.Content asChild position="popper" sideOffset={8}>
+									<motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} transition={{ duration: 0.12 }} className="z-50 min-w-[220px] rounded-2xl border border-white/10 bg-slate-900/95 p-2 shadow-2xl shadow-black/50">
+										<Select.Viewport>
+											{modelOptions.map((option) => (
+												<Select.Item key={option} value={option} className="group flex cursor-pointer items-center justify-between rounded-xl px-3 py-2 text-sm text-white outline-none data-[highlighted]:bg-white/10">
+													<Select.ItemText>{option}</Select.ItemText>
+													<Select.ItemIndicator>•</Select.ItemIndicator>
+												</Select.Item>
+											))}
+										</Select.Viewport>
+									</motion.div>
+								</Select.Content>
+							</Select.Portal>
+						</AnimatePresence>
+					</Select.Root>
+				</label>
+
+				<label className="block text-sm">
+					<span className="text-xs uppercase tracking-[0.3em] text-white/60">Memory Window</span>
+					<input
+						type="number"
+						min={1}
+						max={10}
+						step={1}
+						{...form.register('memoryTurnCount', { valueAsNumber: true })}
+						className="mt-1 w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-2 text-sm focus:border-purple-400 focus:outline-none"
+					/>
+					<p className="mt-1 text-xs text-white/60">Number of previous turns provided to the AI (1-10). Higher numbers help long memory but increase prompt size.</p>
+				</label>
+
+				<p className="text-xs text-white/60">Stored locally via Tauri secure storage. Required to advance adventures.</p>
+
+				<button
+					type="submit"
+					disabled={saver.isPending}
+					className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-white/10 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/20 disabled:opacity-50"
+				>
+					{saver.isPending ? 'Saving…' : 'Save Settings'}
+					<RefreshCw className="h-4 w-4" />
+				</button>
+			</form>
+		</section>
+	)
+}
