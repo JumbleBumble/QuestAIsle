@@ -142,6 +142,7 @@ export const saveSchema = z.object({
 	templateId: z.string(),
 	title: z.string(),
 	summary: z.string().optional(),
+	sessionValueDefinitions: z.array(valueDefinitionSchema).default([]),
 	values: z.record(z.string(), valuePayloadSchema),
 	history: z.array(stepSchema),
 	createdAt: z.string(),

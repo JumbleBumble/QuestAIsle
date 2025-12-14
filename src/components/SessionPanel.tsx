@@ -1,12 +1,30 @@
-import { FormEvent, useEffect, useMemo } from 'react'
+import { FormEvent, useEffect, useMemo, useState } from 'react'
 import { motion, useReducedMotion } from 'framer-motion'
-import { SendHorizonal, Sparkles, Activity, KeyRound } from 'lucide-react'
+import {
+	SendHorizonal,
+	Sparkles,
+	Activity,
+	KeyRound,
+	PlusCircle,
+	Save,
+	Copy,
+} from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { GameSave, GameTemplate } from '../types/game'
+import {
+	GameSave,
+	GameTemplate,
+	GameValueDefinition,
+	valuePayloadSchema,
+	valueTypeSchema,
+} from '../types/game'
 import { useGameStore } from '../state/useGameStore'
 import { useGameTurn } from '../hooks/useGameTurn'
 import { AppSettings } from '../data/settings'
+import { buildEffectiveTemplate } from '../utils/effectiveTemplate'
+import { coerceValueForType } from '../utils/prompting'
+import { useSaveWriter } from '../hooks/useSaveQueries'
+import { useTemplateSaver } from '../hooks/useTemplateQueries'
 
 export function SessionPanel({
 	template,
@@ -21,33 +39,123 @@ export function SessionPanel({
 	const playerAction = useGameStore((state) => state.playerAction)
 	const setPlayerAction = useGameStore((state) => state.setPlayerAction)
 	const setAdvancing = useGameStore((state) => state.setAdvancing)
-	const turn = useGameTurn(template ?? undefined, save ?? undefined, {
-		apiKey: settings?.openaiApiKey,
-		model: settings?.openaiModel,
-		memoryTurnCount: settings?.memoryTurnCount,
-	})
+	const saveWriter = useSaveWriter()
+	const templateSaver = useTemplateSaver()
+	const [isEditingValues, setIsEditingValues] = useState(false)
+	const [localSaveOverride, setLocalSaveOverride] =
+		useState<GameSave | null>(null)
+	const [sessionDefsDraft, setSessionDefsDraft] = useState<
+		GameValueDefinition[]
+	>([])
+	const [valueDrafts, setValueDrafts] = useState<Record<string, string>>({})
+	const [runValueError, setRunValueError] = useState<string | null>(null)
+	const [templateExportMessage, setTemplateExportMessage] = useState<
+		string | null
+	>(null)
+	const [historyEditId, setHistoryEditId] = useState<string | null>(null)
+	const [historyEditPlayerAction, setHistoryEditPlayerAction] = useState('')
+	const [historyEditNarrative, setHistoryEditNarrative] = useState('')
+	const [pendingRewindId, setPendingRewindId] = useState<string | null>(null)
+	const [historyOpError, setHistoryOpError] = useState<string | null>(null)
+
+	const resolvedSave = useMemo(() => {
+		if (localSaveOverride && localSaveOverride.id === save?.id) {
+			return localSaveOverride
+		}
+		return save ?? null
+	}, [localSaveOverride, save])
 
 	useEffect(() => {
-		setAdvancing(turn.isPending)
-	}, [turn.isPending, setAdvancing])
+		setLocalSaveOverride(null)
+	}, [save?.id])
+
+	const effectiveTemplate = useMemo(() => {
+		if (!template) {
+			return undefined
+		}
+		return buildEffectiveTemplate(template, resolvedSave)
+	}, [template, resolvedSave])
+
+	const editorTemplate = useMemo(() => {
+		if (!template || !resolvedSave) {
+			return undefined
+		}
+		return buildEffectiveTemplate(template, {
+			...resolvedSave,
+			sessionValueDefinitions: sessionDefsDraft,
+		})
+	}, [template, resolvedSave, sessionDefsDraft])
+
+	const effectiveTurn = useGameTurn(
+		effectiveTemplate,
+		resolvedSave ?? undefined,
+		{
+			apiKey: settings?.openaiApiKey,
+			model: settings?.openaiModel,
+			memoryTurnCount: settings?.memoryTurnCount,
+		}
+	)
 
 	useEffect(() => {
-		if (turn.isSuccess) {
+		setAdvancing(effectiveTurn.isPending)
+	}, [effectiveTurn.isPending, setAdvancing])
+
+	useEffect(() => {
+		if (effectiveTurn.isSuccess) {
 			setPlayerAction('')
 		}
-	}, [turn.isSuccess, setPlayerAction])
+	}, [effectiveTurn.isSuccess, setPlayerAction])
+
+	const stringifyValue = (value: unknown) => {
+		if (value === undefined || value === null) {
+			return ''
+		}
+		if (typeof value === 'string') {
+			return value
+		}
+		try {
+			return JSON.stringify(value)
+		} catch {
+			return String(value)
+		}
+	}
+
+	useEffect(() => {
+		if (!resolvedSave) {
+			setSessionDefsDraft([])
+			setValueDrafts({})
+			setRunValueError(null)
+			setTemplateExportMessage(null)
+			setHistoryEditId(null)
+			setPendingRewindId(null)
+			setHistoryOpError(null)
+			return
+		}
+		setSessionDefsDraft(resolvedSave.sessionValueDefinitions ?? [])
+		const drafts: Record<string, string> = {}
+		const defs = effectiveTemplate?.valueDefinitions ?? []
+		for (const def of defs) {
+			drafts[def.id] = stringifyValue(resolvedSave.values?.[def.id])
+		}
+		setValueDrafts(drafts)
+		setRunValueError(null)
+		setTemplateExportMessage(null)
+		setHistoryEditId(null)
+		setPendingRewindId(null)
+		setHistoryOpError(null)
+	}, [resolvedSave?.id, effectiveTemplate?.valueDefinitions])
 
 	const valueBlocks = useMemo(() => {
-		if (!template || !save) {
+		if (!effectiveTemplate || !resolvedSave) {
 			return []
 		}
-		return template.valueDefinitions.map((def) => ({
+		return effectiveTemplate.valueDefinitions.map((def) => ({
 			id: def.id,
 			label: def.label,
-			value: save.values[def.id],
+			value: resolvedSave.values[def.id],
 			meta: def,
 		}))
-	}, [template, save])
+	}, [effectiveTemplate, resolvedSave])
 
 	const renderValue = (value: unknown) => {
 		if (Array.isArray(value)) {
@@ -62,17 +170,17 @@ export function SessionPanel({
 		return String(value)
 	}
 
-	const history = save?.history.slice(-5).reverse() ?? []
+	const history = resolvedSave?.history.slice(-5).reverse() ?? []
 
 	const latestSuggestions = useMemo(() => {
-		if (!save?.history.length) {
+		if (!resolvedSave?.history.length) {
 			return []
 		}
-		const last = save.history[save.history.length - 1]
+		const last = resolvedSave.history[resolvedSave.history.length - 1]
 		return (last.playerOptions ?? []).filter(
 			(option) => option.trim().length > 0
 		)
-	}, [save])
+	}, [resolvedSave])
 
 	const handleSuggestion = (suggestion: string) => {
 		setPlayerAction(suggestion)
@@ -80,10 +188,325 @@ export function SessionPanel({
 
 	const handleAdvance = (event: FormEvent) => {
 		event.preventDefault()
-		if (!template || !save) {
+		if (!effectiveTemplate || !resolvedSave) {
 			return
 		}
-		turn.mutate(playerAction || 'Continue the scene')
+		effectiveTurn.mutate(playerAction || 'Continue the scene')
+	}
+
+	const handleStartHistoryEdit = (stepId: string) => {
+		setHistoryOpError(null)
+		setPendingRewindId(null)
+		if (!resolvedSave) {
+			return
+		}
+		const step = resolvedSave.history.find((entry) => entry.id === stepId)
+		if (!step) {
+			return
+		}
+		setHistoryEditId(stepId)
+		setHistoryEditPlayerAction(step.playerAction)
+		setHistoryEditNarrative(step.narrative)
+	}
+
+	const handleCancelHistoryEdit = () => {
+		setHistoryEditId(null)
+		setHistoryEditPlayerAction('')
+		setHistoryEditNarrative('')
+		setHistoryOpError(null)
+	}
+
+	const handleSaveHistoryEdit = async (stepId: string) => {
+		setHistoryOpError(null)
+		setPendingRewindId(null)
+		if (!resolvedSave) {
+			return
+		}
+		const trimmedAction = historyEditPlayerAction.trim()
+		const trimmedNarrative = historyEditNarrative.trim()
+		if (!trimmedAction) {
+			setHistoryOpError('Player action cannot be empty.')
+			return
+		}
+		if (!trimmedNarrative) {
+			setHistoryOpError('Narrative cannot be empty.')
+			return
+		}
+		const nextHistory = resolvedSave.history.map((entry) =>
+			entry.id === stepId
+				? {
+						...entry,
+						playerAction: trimmedAction,
+						narrative: trimmedNarrative,
+				  }
+				: entry
+		)
+		try {
+			const updated = await saveWriter.mutateAsync({
+				id: resolvedSave.id,
+				templateId: resolvedSave.templateId,
+				title: resolvedSave.title,
+				summary: resolvedSave.summary,
+				sessionValueDefinitions: resolvedSave.sessionValueDefinitions,
+				values: resolvedSave.values,
+				history: nextHistory,
+			})
+			setLocalSaveOverride(updated)
+			setHistoryEditId(null)
+		} catch (error) {
+			setHistoryOpError(
+				error instanceof Error
+					? error.message
+					: 'Unable to save history edits.'
+			)
+		}
+	}
+
+	const handleConfirmRewind = async (stepId: string) => {
+		setHistoryOpError(null)
+		setHistoryEditId(null)
+		if (!resolvedSave) {
+			return
+		}
+		const stepIndex = resolvedSave.history.findIndex(
+			(entry) => entry.id === stepId
+		)
+		if (stepIndex === -1) {
+			return
+		}
+		const keepCount = stepIndex
+
+		const nextValues = { ...resolvedSave.values }
+		for (let i = resolvedSave.history.length - 1; i >= keepCount; i -= 1) {
+			const step = resolvedSave.history[i]
+			for (const change of step.stateChanges ?? []) {
+				if (change.previous === undefined) {
+					delete nextValues[change.valueId]
+					continue
+				}
+				nextValues[change.valueId] = change.previous
+			}
+		}
+
+		try {
+			const updated = await saveWriter.mutateAsync({
+				id: resolvedSave.id,
+				templateId: resolvedSave.templateId,
+				title: resolvedSave.title,
+				summary: resolvedSave.summary,
+				sessionValueDefinitions: resolvedSave.sessionValueDefinitions,
+				values: nextValues,
+				history: resolvedSave.history.slice(0, keepCount),
+			})
+			setLocalSaveOverride(updated)
+			setPendingRewindId(null)
+		} catch (error) {
+			setHistoryOpError(
+				error instanceof Error
+					? error.message
+					: 'Unable to rewind the session.'
+			)
+		}
+	}
+
+	const fallbackMap: Record<string, unknown> = {
+		boolean: false,
+		integer: 0,
+		float: 0,
+		number: 0,
+		string: '',
+		text: '',
+		array: [],
+		object: {},
+	}
+
+	const parseValueInput = (def: GameValueDefinition, rawInput: string) => {
+		const raw = rawInput.trim()
+		if (!raw) {
+			return undefined
+		}
+		let candidate: unknown = raw
+		try {
+			if (def.type === 'integer') {
+				candidate = Number.parseInt(raw, 10)
+			} else if (def.type === 'float' || def.type === 'number') {
+				candidate = Number.parseFloat(raw)
+			} else if (def.type === 'boolean') {
+				candidate = raw === 'true'
+			} else if (def.type === 'array' || def.type === 'object') {
+				candidate = JSON.parse(raw)
+			}
+		} catch {
+			throw new Error(
+				`Invalid ${def.type} value. For array/object, enter valid JSON.`
+			)
+		}
+
+		const validated = valuePayloadSchema.safeParse(candidate)
+		if (!validated.success) {
+			throw new Error(
+				`Value for "${def.id}" must be a string/number/boolean, an array of those, or an object of those.`
+			)
+		}
+		return validated.data
+	}
+
+	const handleAddSessionValue = () => {
+		setRunValueError(null)
+		setTemplateExportMessage(null)
+		const nextIndex = sessionDefsDraft.length + 1
+		const next: GameValueDefinition = {
+			id: `run_value_${nextIndex}`,
+			label: 'Run Value',
+			type: 'string',
+			description: '',
+			visibility: 'public',
+			defaultValue: '',
+		}
+		setSessionDefsDraft((current) => [...current, next])
+		setValueDrafts((current) => ({
+			...current,
+			[next.id]: current[next.id] ?? '',
+		}))
+		setIsEditingValues(true)
+	}
+
+	const handleUpdateSessionDef = (
+		index: number,
+		patch: Partial<GameValueDefinition>
+	) => {
+		setSessionDefsDraft((current) => {
+			const clone = [...current]
+			clone[index] = { ...clone[index], ...patch }
+			return clone
+		})
+	}
+
+	const handleRemoveSessionDef = (index: number) => {
+		setRunValueError(null)
+		setTemplateExportMessage(null)
+		setSessionDefsDraft((current) => {
+			const clone = [...current]
+			const removed = clone.splice(index, 1)[0]
+			if (removed) {
+				setValueDrafts((drafts) => {
+					const next = { ...drafts }
+					delete next[removed.id]
+					return next
+				})
+			}
+			return clone
+		})
+	}
+
+	const handlePersistRunValues = async () => {
+		setRunValueError(null)
+		setTemplateExportMessage(null)
+		if (!template || !effectiveTemplate || !resolvedSave) {
+			return
+		}
+
+		const baseIds = new Set(template.valueDefinitions.map((def) => def.id))
+		const sessionIds = new Set<string>()
+		for (const def of sessionDefsDraft) {
+			if (!def.id.trim()) {
+				setRunValueError('Every run-only value needs an id.')
+				return
+			}
+			if (baseIds.has(def.id)) {
+				setRunValueError(
+					`Run-only value id "${def.id}" conflicts with a template value id.`
+				)
+				return
+			}
+			if (sessionIds.has(def.id)) {
+				setRunValueError(`Duplicate run-only value id "${def.id}".`)
+				return
+			}
+			sessionIds.add(def.id)
+		}
+
+		const allowedIds = new Set(
+			buildEffectiveTemplate(template, {
+				...resolvedSave,
+				sessionValueDefinitions: sessionDefsDraft,
+			}).valueDefinitions.map((def) => def.id)
+		)
+
+		const nextValues: GameSave['values'] = {}
+		for (const def of buildEffectiveTemplate(template, {
+			...resolvedSave,
+			sessionValueDefinitions: sessionDefsDraft,
+		}).valueDefinitions) {
+			const raw = valueDrafts[def.id] ?? ''
+			let parsed
+			try {
+				parsed = parseValueInput(def, raw)
+			} catch (error) {
+				setRunValueError(
+					error instanceof Error
+						? error.message
+						: 'Unable to parse a run value.'
+				)
+				return
+			}
+			if (parsed === undefined) {
+				const existing = resolvedSave.values?.[def.id]
+				const fallback =
+					def.defaultValue ?? (fallbackMap[def.type] as any)
+				nextValues[def.id] = coerceValueForType(
+					def,
+					(existing ?? fallback) as any
+				)
+				continue
+			}
+			nextValues[def.id] = coerceValueForType(def, parsed as any)
+		}
+
+		for (const [key, val] of Object.entries(resolvedSave.values ?? {})) {
+			if (!allowedIds.has(key)) {
+				continue
+			}
+			if (key in nextValues) {
+				continue
+			}
+			nextValues[key] = val
+		}
+
+		const updated = await saveWriter.mutateAsync({
+			id: resolvedSave.id,
+			templateId: resolvedSave.templateId,
+			title: resolvedSave.title,
+			summary: resolvedSave.summary,
+			sessionValueDefinitions: sessionDefsDraft,
+			values: nextValues,
+			history: resolvedSave.history,
+		})
+		setLocalSaveOverride(updated)
+	}
+
+	const handleSaveAsNewTemplate = async () => {
+		setRunValueError(null)
+		setTemplateExportMessage(null)
+		if (!template || !resolvedSave) {
+			return
+		}
+		const merged = buildEffectiveTemplate(template, {
+			...resolvedSave,
+			sessionValueDefinitions: sessionDefsDraft,
+		})
+		const created = await templateSaver.mutateAsync({
+			draft: {
+				title: `${template.title} (Run Copy)`,
+				premise: template.premise,
+				genre: template.genre,
+				setting: template.setting,
+				safety: template.safety,
+				instructionBlocks: template.instructionBlocks,
+				valueDefinitions: merged.valueDefinitions,
+			},
+		})
+		setTemplateExportMessage(`Saved new template: ${created.title}`)
 	}
 
 	const hasApiKey = Boolean(
@@ -123,8 +546,335 @@ export function SessionPanel({
 					)}
 				</header>
 
+				{effectiveTemplate && editorTemplate && save && (
+					<div className="rounded-3xl border border-white/10 bg-white/5 p-5 backdrop-blur">
+						<div className="flex flex-wrap items-center justify-between gap-3">
+							<div>
+								<p className="text-xs uppercase tracking-[0.3em] text-purple-200">
+									Run Values
+								</p>
+								<p className="text-sm text-purple-100/80">
+									Edit values for this run, or add run-only
+									tracked values without changing the base
+									template.
+								</p>
+							</div>
+							<div className="flex flex-wrap items-center gap-2">
+								<motion.button
+									type="button"
+									onClick={() =>
+										setIsEditingValues(
+											(current) => !current
+										)
+									}
+									whileHover={
+										reduceMotion
+											? undefined
+											: { scale: 1.02 }
+									}
+									whileTap={
+										reduceMotion
+											? undefined
+											: { scale: 0.99 }
+									}
+									className="rounded-2xl border border-white/10 bg-white/10 px-3 py-2 text-xs font-semibold text-white hover:bg-white/15"
+								>
+									{isEditingValues
+										? 'Close editor'
+										: 'Edit run values'}
+								</motion.button>
+								<motion.button
+									type="button"
+									onClick={handleAddSessionValue}
+									whileHover={
+										reduceMotion
+											? undefined
+											: { scale: 1.02 }
+									}
+									whileTap={
+										reduceMotion
+											? undefined
+											: { scale: 0.99 }
+									}
+									className="inline-flex items-center gap-2 rounded-2xl bg-white/10 px-3 py-2 text-xs font-semibold text-white hover:bg-white/15"
+								>
+									<PlusCircle className="h-4 w-4" /> Add run
+									value
+								</motion.button>
+							</div>
+						</div>
+
+						{isEditingValues && (
+							<div className="mt-4 space-y-4">
+								<div className="grid gap-3 md:grid-cols-2">
+									{editorTemplate.valueDefinitions.map(
+										(def) => {
+											const isRunOnly =
+												sessionDefsDraft.some(
+													(entry) =>
+														entry.id === def.id
+												)
+											return (
+												<div
+													key={def.id}
+													className="rounded-2xl border border-white/10 bg-black/30 p-4"
+												>
+													<div className="flex items-start justify-between gap-3">
+														<div>
+															<p className="text-xs uppercase tracking-[0.3em] text-purple-200">
+																{def.label}{' '}
+																<span className="text-purple-100/60">
+																	({def.id})
+																</span>
+															</p>
+															<p className="text-xs text-purple-100/70">
+																Type:{' '}
+																{def.type}
+																{isRunOnly
+																	? ' · Run-only'
+																	: ' · Template'}
+															</p>
+														</div>
+													</div>
+													<textarea
+														value={
+															valueDrafts[
+																def.id
+															] ?? ''
+														}
+														onChange={(event) => {
+															setValueDrafts(
+																(current) => ({
+																	...current,
+																	[def.id]:
+																		event
+																			.currentTarget
+																			.value,
+																})
+															)
+														}}
+														rows={2}
+														placeholder="Leave blank to keep current value"
+														className="mt-3 w-full rounded-2xl border border-white/10 bg-black/40 px-3 py-2 text-sm text-white focus:border-purple-400 focus:outline-none"
+													/>
+												</div>
+											)
+										}
+									)}
+								</div>
+
+								{sessionDefsDraft.length > 0 && (
+									<div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+										<p className="text-xs uppercase tracking-[0.3em] text-purple-200">
+											Run-only tracked values
+											(definitions)
+										</p>
+										<div className="mt-3 space-y-3">
+											{sessionDefsDraft.map(
+												(def, index) => (
+													<div
+														key={`${def.id}-${index}`}
+														className="rounded-2xl border border-white/10 bg-black/30 p-4"
+													>
+														<div className="flex flex-wrap items-center gap-3">
+															<input
+																value={def.id}
+																onChange={(
+																	event
+																) =>
+																	handleUpdateSessionDef(
+																		index,
+																		{
+																			id: event
+																				.currentTarget
+																				.value,
+																		}
+																	)
+																}
+																placeholder="value_id"
+																className="flex-1 rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm text-white focus:border-purple-400 focus:outline-none"
+															/>
+															<input
+																value={
+																	def.label
+																}
+																onChange={(
+																	event
+																) =>
+																	handleUpdateSessionDef(
+																		index,
+																		{
+																			label: event
+																				.currentTarget
+																				.value,
+																		}
+																	)
+																}
+																placeholder="Display label"
+																className="flex-1 rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm text-white focus:border-purple-400 focus:outline-none"
+															/>
+															<select
+																value={
+																	def.type
+																}
+																onChange={(
+																	event
+																) =>
+																	handleUpdateSessionDef(
+																		index,
+																		{
+																			type: event
+																				.currentTarget
+																				.value as any,
+																		}
+																	)
+																}
+																className="rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm text-white focus:border-purple-400 focus:outline-none"
+															>
+																{valueTypeSchema.options.map(
+																	(
+																		option
+																	) => (
+																		<option
+																			key={
+																				option
+																			}
+																			value={
+																				option
+																			}
+																			className="bg-slate-900"
+																		>
+																			{
+																				option
+																			}
+																		</option>
+																	)
+																)}
+															</select>
+															<motion.button
+																type="button"
+																onClick={() =>
+																	handleRemoveSessionDef(
+																		index
+																	)
+																}
+																whileHover={
+																	reduceMotion
+																		? undefined
+																		: {
+																				scale: 1.02,
+																		  }
+																}
+																whileTap={
+																	reduceMotion
+																		? undefined
+																		: {
+																				scale: 0.98,
+																		  }
+																}
+																className="text-xs text-red-200 hover:text-red-100"
+															>
+																Remove
+															</motion.button>
+														</div>
+														<input
+															value={
+																def.description ??
+																''
+															}
+															onChange={(
+																event
+															) =>
+																handleUpdateSessionDef(
+																	index,
+																	{
+																		description:
+																			event
+																				.currentTarget
+																				.value,
+																	}
+																)
+															}
+															placeholder="Narrative guidance"
+															className="mt-3 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white focus:border-purple-400 focus:outline-none"
+														/>
+													</div>
+												)
+											)}
+										</div>
+									</div>
+								)}
+
+								<div className="flex flex-wrap items-center justify-between gap-3">
+									<p className="text-xs text-purple-100/70">
+										Numbers can be plain text;
+										arrays/objects must be JSON. Leave a
+										value blank to keep the current value.
+									</p>
+									<div className="flex flex-wrap items-center gap-2">
+										<motion.button
+											type="button"
+											disabled={saveWriter.isPending}
+											onClick={handlePersistRunValues}
+											whileHover={
+												reduceMotion ||
+												saveWriter.isPending
+													? undefined
+													: { scale: 1.01 }
+											}
+											whileTap={
+												reduceMotion ||
+												saveWriter.isPending
+													? undefined
+													: { scale: 0.99 }
+											}
+											className="inline-flex items-center gap-2 rounded-2xl bg-linear-to-r from-emerald-500 to-teal-500 px-4 py-2 text-xs font-semibold text-white shadow-lg shadow-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+										>
+											<Save className="h-4 w-4" />
+											{saveWriter.isPending
+												? 'Saving…'
+												: 'Save to this run'}
+										</motion.button>
+										<motion.button
+											type="button"
+											disabled={templateSaver.isPending}
+											onClick={handleSaveAsNewTemplate}
+											whileHover={
+												reduceMotion ||
+												templateSaver.isPending
+													? undefined
+													: { scale: 1.01 }
+											}
+											whileTap={
+												reduceMotion ||
+												templateSaver.isPending
+													? undefined
+													: { scale: 0.99 }
+											}
+											className="inline-flex items-center gap-2 rounded-2xl bg-white/10 px-4 py-2 text-xs font-semibold text-white hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-50"
+										>
+											<Copy className="h-4 w-4" />
+											Save as new template
+										</motion.button>
+									</div>
+								</div>
+								{runValueError && (
+									<p className="text-sm text-rose-200">
+										{runValueError}
+									</p>
+								)}
+								{templateExportMessage && (
+									<p className="text-sm text-emerald-200">
+										{templateExportMessage}
+									</p>
+								)}
+							</div>
+						)}
+					</div>
+				)}
+
 				<div className="grid gap-4 md:grid-cols-3">
-					{template && save ? (
+					{effectiveTemplate && save ? (
 						valueBlocks.map(({ id, label, value, meta }) => (
 							<motion.div
 								key={id}
@@ -204,32 +954,32 @@ export function SessionPanel({
 						<motion.button
 							type="submit"
 							disabled={
-								!template ||
+								!effectiveTemplate ||
 								!save ||
-								turn.isPending ||
+								effectiveTurn.isPending ||
 								!hasApiKey
 							}
 							whileHover={
 								reduceMotion ||
-								!template ||
+								!effectiveTemplate ||
 								!save ||
-								turn.isPending ||
+								effectiveTurn.isPending ||
 								!hasApiKey
 									? undefined
 									: { scale: 1.01 }
 							}
 							whileTap={
 								reduceMotion ||
-								!template ||
+								!effectiveTemplate ||
 								!save ||
-								turn.isPending ||
+								effectiveTurn.isPending ||
 								!hasApiKey
 									? undefined
 									: { scale: 0.99 }
 							}
 							className="inline-flex items-center gap-2 rounded-2xl bg-linear-to-r from-indigo-500 to-fuchsia-500 px-5 py-3 text-sm font-semibold shadow-lg shadow-indigo-500/30 disabled:cursor-not-allowed disabled:opacity-40"
 						>
-							{turn.isPending
+							{effectiveTurn.isPending
 								? 'Consulting Oracle…'
 								: 'Advance Story'}
 							<SendHorizonal className="h-4 w-4" />
@@ -241,10 +991,10 @@ export function SessionPanel({
 							API key in the Settings panel to enable turns.
 						</p>
 					)}
-					{turn.isError && (
+					{effectiveTurn.isError && (
 						<p className="mt-2 text-sm text-rose-200">
-							{turn.error instanceof Error
-								? turn.error.message
+							{effectiveTurn.error instanceof Error
+								? effectiveTurn.error.message
 								: 'Unable to run the turn with OpenAI.'}
 						</p>
 					)}
@@ -254,6 +1004,11 @@ export function SessionPanel({
 					<div className="flex items-center gap-3 text-sm text-purple-100">
 						<Sparkles className="h-4 w-4" /> Story Log
 					</div>
+					{historyOpError && (
+						<p className="text-sm text-rose-200">
+							{historyOpError}
+						</p>
+					)}
 					{!history.length && (
 						<p className="text-sm text-purple-200/70">
 							No turns yet. Submit an action to begin.
@@ -266,20 +1021,198 @@ export function SessionPanel({
 							initial={{ opacity: 0, y: 10 }}
 							animate={{ opacity: 1, y: 0 }}
 						>
-							<p className="text-xs uppercase tracking-[0.3em] text-purple-400">
-								Player
-							</p>
-							<p className="text-sm text-white">
-								{entry.playerAction}
-							</p>
+							<div className="flex flex-wrap items-start justify-between gap-3">
+								<div>
+									<p className="text-xs uppercase tracking-[0.3em] text-purple-400">
+										Player
+									</p>
+									{historyEditId === entry.id ? (
+										<input
+											value={historyEditPlayerAction}
+											onChange={(event) =>
+												setHistoryEditPlayerAction(
+													event.currentTarget.value
+												)
+											}
+											className="mt-1 w-full rounded-2xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white focus:border-purple-400 focus:outline-none"
+										/>
+									) : (
+										<p className="text-sm text-white">
+											{entry.playerAction}
+										</p>
+									)}
+								</div>
+								<div className="flex flex-wrap items-center gap-2">
+									{historyEditId === entry.id ? (
+										<>
+											<motion.button
+												type="button"
+												onClick={() =>
+													handleSaveHistoryEdit(
+														entry.id
+													)
+												}
+												whileHover={
+													reduceMotion ||
+													saveWriter.isPending
+														? undefined
+														: { scale: 1.02 }
+												}
+												whileTap={
+													reduceMotion ||
+													saveWriter.isPending
+														? undefined
+														: { scale: 0.99 }
+												}
+												disabled={saveWriter.isPending}
+												className="rounded-2xl bg-white/10 px-3 py-1 text-xs font-semibold text-white hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-50"
+											>
+												Save
+											</motion.button>
+											<motion.button
+												type="button"
+												onClick={
+													handleCancelHistoryEdit
+												}
+												whileHover={
+													reduceMotion
+														? undefined
+														: { scale: 1.02 }
+												}
+												whileTap={
+													reduceMotion
+														? undefined
+														: { scale: 0.99 }
+												}
+												className="rounded-2xl border border-white/10 bg-black/30 px-3 py-1 text-xs text-purple-50 hover:border-purple-400"
+											>
+												Cancel
+											</motion.button>
+										</>
+									) : (
+										<>
+											<motion.button
+												type="button"
+												onClick={() =>
+													handleStartHistoryEdit(
+														entry.id
+													)
+												}
+												whileHover={
+													reduceMotion
+														? undefined
+														: { scale: 1.02 }
+												}
+												whileTap={
+													reduceMotion
+														? undefined
+														: { scale: 0.99 }
+												}
+												className="rounded-2xl border border-white/10 bg-white/10 px-3 py-1 text-xs text-purple-50 transition hover:border-purple-400 hover:bg-purple-500/20"
+											>
+												Edit
+											</motion.button>
+											<motion.button
+												type="button"
+												onClick={() => {
+													setHistoryOpError(null)
+													setHistoryEditId(null)
+													setPendingRewindId(
+														entry.id
+													)
+												}}
+												whileHover={
+													reduceMotion
+														? undefined
+														: { scale: 1.02 }
+												}
+												whileTap={
+													reduceMotion
+														? undefined
+														: { scale: 0.99 }
+												}
+												className="rounded-2xl border border-white/10 bg-black/30 px-3 py-1 text-xs text-purple-50 hover:border-purple-400"
+											>
+												Rewind
+											</motion.button>
+										</>
+									)}
+								</div>
+							</div>
 							<p className="mt-3 text-xs uppercase tracking-[0.3em] text-fuchsia-300">
 								AI Narrator
 							</p>
-							<div className="mt-1 text-base leading-relaxed text-white">
-								<ReactMarkdown remarkPlugins={[remarkGfm]}>
-									{entry.narrative}
-								</ReactMarkdown>
-							</div>
+							{historyEditId === entry.id ? (
+								<textarea
+									value={historyEditNarrative}
+									onChange={(event) =>
+										setHistoryEditNarrative(
+											event.currentTarget.value
+										)
+									}
+									rows={4}
+									className="mt-1 w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-white focus:border-purple-400 focus:outline-none"
+								/>
+							) : (
+								<div className="mt-1 text-base leading-relaxed text-white">
+									<ReactMarkdown remarkPlugins={[remarkGfm]}>
+										{entry.narrative}
+									</ReactMarkdown>
+								</div>
+							)}
+							{pendingRewindId === entry.id && (
+								<div className="mt-3 rounded-2xl border border-white/10 bg-white/5 p-3">
+									<p className="text-xs text-purple-100/80">
+										Rewind to before this step? This
+										removes this turn and any later turns,
+										and restores tracked values using the
+										recorded previous values.
+									</p>
+									<div className="mt-2 flex flex-wrap items-center gap-2">
+										<motion.button
+											type="button"
+											onClick={() =>
+												handleConfirmRewind(entry.id)
+											}
+											disabled={saveWriter.isPending}
+											whileHover={
+												reduceMotion ||
+												saveWriter.isPending
+													? undefined
+													: { scale: 1.02 }
+											}
+											whileTap={
+												reduceMotion ||
+												saveWriter.isPending
+													? undefined
+													: { scale: 0.99 }
+											}
+											className="rounded-2xl bg-linear-to-r from-emerald-500 to-teal-500 px-3 py-2 text-xs font-semibold text-white shadow-lg shadow-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+										>
+											Confirm rewind
+										</motion.button>
+										<motion.button
+											type="button"
+											onClick={() =>
+												setPendingRewindId(null)
+											}
+											whileHover={
+												reduceMotion
+													? undefined
+													: { scale: 1.02 }
+											}
+											whileTap={
+												reduceMotion
+													? undefined
+													: { scale: 0.99 }
+											}
+											className="rounded-2xl border border-white/10 bg-black/30 px-3 py-2 text-xs text-purple-50 hover:border-purple-400"
+										>
+											Cancel
+										</motion.button>
+									</div>
+								</div>
+							)}
 							{entry.stateChanges.length > 0 && (
 								<ul className="mt-3 text-xs text-emerald-200">
 									{entry.stateChanges.map((change) => (

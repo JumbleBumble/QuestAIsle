@@ -8,6 +8,7 @@ export type SaveDraft = {
 	templateId: string
 	title: string
 	summary?: string
+	sessionValueDefinitions?: GameSave['sessionValueDefinitions']
 	values: GameSave['values']
 	history?: GameSave['history']
 }
@@ -34,6 +35,7 @@ export async function persistSave(draft: SaveDraft, existing?: GameSave) {
 		templateId: draft.templateId,
 		title: draft.title,
 		summary: draft.summary ?? base?.summary,
+		sessionValueDefinitions: draft.sessionValueDefinitions ?? base?.sessionValueDefinitions ?? [],
 		values: draft.values,
 		history: draft.history ?? base?.history ?? [],
 		createdAt: base?.createdAt ?? now,
