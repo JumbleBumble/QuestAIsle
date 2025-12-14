@@ -64,7 +64,19 @@ const templateSuggestionSchema = z.object({
 				type: valueTypeSchema,
 				description: z.string().optional(),
 				defaultValue: valuePayloadSchema.optional(),
-			}),
+				min: z.preprocess(
+					(value) => (value === null ? undefined : value),
+					z.number().finite().optional()
+				),
+				max: z.preprocess(
+					(value) => (value === null ? undefined : value),
+					z.number().finite().optional()
+				),
+				maxLength: z.preprocess(
+					(value) => (value === null ? undefined : value),
+					z.number().int().positive().optional()
+				),
+			})
 		)
 		.min(1)
 		.max(10),
@@ -76,9 +88,13 @@ export type TemplateGeneratorParams = {
 	prompt: string
 	apiKey?: string | null
 	model?: string | null
+	mode?: 'new' | 'edit'
+	baseTemplate?: TemplateSuggestion
 }
 
-const scalarJsonSchema = { anyOf: [{ type: 'string' }, { type: 'number' }, { type: 'boolean' }] }
+const scalarJsonSchema = {
+	anyOf: [{ type: 'string' }, { type: 'number' }, { type: 'boolean' }],
+}
 
 const anyValueJsonSchema = {
 	anyOf: [
@@ -87,7 +103,10 @@ const anyValueJsonSchema = {
 		{
 			type: 'object',
 			additionalProperties: {
-				anyOf: [scalarJsonSchema, { type: 'array', items: scalarJsonSchema }],
+				anyOf: [
+					scalarJsonSchema,
+					{ type: 'array', items: scalarJsonSchema },
+				],
 			},
 		},
 	],
@@ -97,13 +116,27 @@ const templateResponseFormat = {
 	type: 'json_schema' as const,
 	json_schema: {
 		name: 'template_blueprint_v1',
-			schema: {
-				type: 'object',
-				required: ['title', 'premise', 'genre', 'setting', 'safety', 'instructionBlocks', 'values'],
-				additionalProperties: false,
+		schema: {
+			type: 'object',
+			required: [
+				'title',
+				'premise',
+				'genre',
+				'setting',
+				'safety',
+				'instructionBlocks',
+				'values',
+			],
+			additionalProperties: false,
 			properties: {
-				title: { type: 'string', description: 'Short evocative template title.' },
-				premise: { type: 'string', description: 'Premise players will follow.' },
+				title: {
+					type: 'string',
+					description: 'Short evocative template title.',
+				},
+				premise: {
+					type: 'string',
+					description: 'Premise players will follow.',
+				},
 				genre: { type: 'string' },
 				setting: { type: 'string' },
 				safety: { type: 'string' },
@@ -120,14 +153,41 @@ const templateResponseFormat = {
 					maxItems: 8,
 					items: {
 						type: 'object',
-						required: ['id', 'label', 'type', 'description', 'defaultValue'],
+						required: [
+							'id',
+							'label',
+							'type',
+							'description',
+							'defaultValue',
+							'min',
+							'max',
+							'maxLength',
+						],
 						additionalProperties: false,
 						properties: {
 							id: { type: 'string', pattern: '^[a-z0-9_-]+$' },
 							label: { type: 'string' },
-							type: { type: 'string', enum: valueTypeSchema.options },
+							type: {
+								type: 'string',
+								enum: valueTypeSchema.options,
+							},
 							description: { type: 'string' },
 							defaultValue: anyValueJsonSchema,
+							min: {
+								anyOf: [{ type: 'number' }, { type: 'null' }],
+								description:
+									'Optional numeric minimum (only for integer/float/number).',
+							},
+							max: {
+								anyOf: [{ type: 'number' }, { type: 'null' }],
+								description:
+									'Optional numeric maximum (only for integer/float/number).',
+							},
+							maxLength: {
+								anyOf: [{ type: 'number' }, { type: 'null' }],
+								description:
+									'Optional max array length (only for array).',
+							},
 						},
 					},
 				},
@@ -136,36 +196,70 @@ const templateResponseFormat = {
 	},
 }
 
-export async function generateTemplateFromPrompt(params: TemplateGeneratorParams) {
-	const resolvedKey = params.apiKey?.trim() || import.meta.env.VITE_OPENAI_API_KEY
+export async function generateTemplateFromPrompt(
+	params: TemplateGeneratorParams
+) {
+	const resolvedKey =
+		params.apiKey?.trim() || import.meta.env.VITE_OPENAI_API_KEY
 	if (!resolvedKey) {
-		throw new Error('Add an OpenAI API key inside Settings to generate templates.')
+		throw new Error(
+			'Add an OpenAI API key inside Settings to generate templates.'
+		)
 	}
-	const resolvedModel = params.model?.trim() || import.meta.env.VITE_OPENAI_MODEL || 'gpt-4.1-mini'
-	const client = new OpenAI({ apiKey: resolvedKey, dangerouslyAllowBrowser: true })
+	const resolvedModel =
+		params.model?.trim() ||
+		import.meta.env.VITE_OPENAI_MODEL ||
+		'gpt-4.1-mini'
+	const client = new OpenAI({
+		apiKey: resolvedKey,
+		dangerouslyAllowBrowser: true,
+	})
 
-	const systemPrompt = `You are an award-winning tabletop RPG designer. Craft story templates with concrete stakes, clear safety guidance, and 3-8 precise tracked values. Generate compact JSON that follows the provided schema exactly.`
-	const userPrompt = `Design a cinematic GM template for the following request:
+	const mode = params.mode ?? 'new'
+	const baseTemplateJson = params.baseTemplate
+		? JSON.stringify(params.baseTemplate, null, 2)
+		: null
+
+	const systemPrompt = `You are an award-winning tabletop RPG designer. Craft story templates with concrete stakes, clear safety guidance, and 3-8 precise tracked values. Generate compact JSON that follows the provided schema exactly.
+
+For numeric tracked values (integer/float/number), you may optionally include min/max to establish bounds. For array tracked values, you may optionally include maxLength to cap list size.`
+
+	const userPrompt =
+		mode === 'edit'
+			? `You are editing an existing GM template.
+
+Current template JSON:
+${baseTemplateJson ?? '{}'}
+
+Edit request:
+"""${params.prompt}"""
+
+Return a fully updated template (not a diff) that follows the schema exactly.
+
+Editing rules:
+- Preserve existing tracked value ids whenever possible (do not rename ids unless the request explicitly requires it).
+- Keep the tracked values list within 3-8 items.
+- Keep safety guidance and instruction blocks concise and actionable.
+`
+			: `Design a cinematic GM template for the following request:
 """${params.prompt}"""
 
 Ensure each tracked value has a concise snake_case id, a descriptive label, and defaults that reflect the genre.`
 
-	const response = (await client.responses.create(
-		{
-			model: resolvedModel,
-			input: [
-				{ role: 'system', content: systemPrompt },
-				{ role: 'user', content: userPrompt },
-			],
-			text: {
-				format: {
-					name: templateResponseFormat.json_schema.name,
-					type: 'json_schema',
-					schema: templateResponseFormat.json_schema.schema,
-				},
+	const response = (await client.responses.create({
+		model: resolvedModel,
+		input: [
+			{ role: 'system', content: systemPrompt },
+			{ role: 'user', content: userPrompt },
+		],
+		text: {
+			format: {
+				name: templateResponseFormat.json_schema.name,
+				type: 'json_schema',
+				schema: templateResponseFormat.json_schema.schema,
 			},
-		} as any,
-	)) as any
+		},
+	} as any)) as any
 
 	const payload = extractJsonPayload(response)
 	return templateSuggestionSchema.parse(payload)

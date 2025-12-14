@@ -25,10 +25,33 @@ function formatValue(def: GameValueDefinition, value: GameValuePayload | undefin
 	return typeof resolved === 'string' ? resolved : JSON.stringify(resolved)
 }
 
+function formatConstraints(def: GameValueDefinition) {
+	if (def.type === 'integer' || def.type === 'float' || def.type === 'number') {
+		const min = def.min
+		const max = def.max
+		if (min === undefined && max === undefined) {
+			return ''
+		}
+		if (min !== undefined && max !== undefined) {
+			return ` [min=${min}, max=${max}]`
+		}
+		if (min !== undefined) {
+			return ` [min=${min}]`
+		}
+		return ` [max=${max}]`
+	}
+
+	if (def.type === 'array') {
+		return def.maxLength ? ` [maxLength=${def.maxLength}]` : ''
+	}
+
+	return ''
+}
+
 function snapshotValues(template: GameTemplate, save: GameSave) {
 	const snapshot: Record<string, GameValuePayload> = {}
 	for (const def of template.valueDefinitions) {
-		snapshot[def.id] = save.values[def.id] ?? def.defaultValue ?? fallbackMap[def.type]
+		snapshot[def.id] = coerceValueForType(def, save.values[def.id] ?? def.defaultValue ?? fallbackMap[def.type])
 	}
 	return snapshot
 }
@@ -36,7 +59,7 @@ function snapshotValues(template: GameTemplate, save: GameSave) {
 export function buildInitialValues(template: GameTemplate) {
 	const values: Record<string, GameValuePayload> = {}
 	for (const def of template.valueDefinitions) {
-		values[def.id] = def.defaultValue ?? fallbackMap[def.type]
+		values[def.id] = coerceValueForType(def, def.defaultValue ?? fallbackMap[def.type])
 	}
 	return values
 }
@@ -69,7 +92,10 @@ export function buildPromptPacket(args: {
 	const { template, save, playerAction, memoryTurnCount } = args
 	const snapshot = snapshotValues(template, save)
 	const valueLines = template.valueDefinitions
-		.map((def) => `- ${def.label} (${def.type} :: ${def.id}) = ${formatValue(def, snapshot[def.id])}`)
+		.map(
+			(def) =>
+				`- ${def.label} (${def.type} :: ${def.id})${formatConstraints(def)} = ${formatValue(def, snapshot[def.id])}`,
+		)
 		.join('\n')
 	const turnWindow = Math.max(1, Math.min(10, memoryTurnCount ?? 4))
 	const recentSteps = save.history
@@ -166,12 +192,28 @@ export function coerceValueForType(def: GameValueDefinition, value: GameValuePay
 		return def.defaultValue ?? fallbackMap[def.type]
 	}
 
+	const clampNumber = (candidate: number) => {
+		if (!Number.isFinite(candidate)) {
+			return def.defaultValue ?? fallbackMap[def.type]
+		}
+		let next = candidate
+		if (def.min !== undefined) {
+			next = Math.max(next, def.min)
+		}
+		if (def.max !== undefined) {
+			next = Math.min(next, def.max)
+		}
+		return next
+	}
+
 	if (def.type === 'integer') {
-		return Math.trunc(Number(value))
+		const coerced = Math.trunc(Number(value))
+		const clamped = clampNumber(coerced)
+		return typeof clamped === 'number' ? Math.trunc(clamped) : clamped
 	}
 
 	if (def.type === 'float' || def.type === 'number') {
-		return Number(value)
+		return clampNumber(Number(value))
 	}
 
 	if (def.type === 'boolean') {
@@ -179,13 +221,18 @@ export function coerceValueForType(def: GameValueDefinition, value: GameValuePay
 	}
 
 	if (def.type === 'array') {
+		let next: ScalarValue[]
 		if (Array.isArray(value)) {
-			return value as GameValuePayload
+			next = value as ScalarValue[]
+		} else if (typeof value === 'object') {
+			next = [JSON.stringify(value)]
+		} else {
+			next = [value as ScalarValue]
 		}
-		if (typeof value === 'object') {
-			return [JSON.stringify(value)]
+		if (def.maxLength !== undefined && Number.isFinite(def.maxLength) && def.maxLength > 0) {
+			next = next.slice(0, def.maxLength)
 		}
-		return [value as ScalarValue]
+		return next as GameValuePayload
 	}
 
 	if (def.type === 'object' && (typeof value !== 'object' || value === null)) {

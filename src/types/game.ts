@@ -30,15 +30,74 @@ export const valuePayloadSchema: z.ZodType<GameValuePayload> = z.lazy(() =>
 	]),
 )
 
-export const valueDefinitionSchema = z.object({
-	id: z.string().min(1),
-	label: z.string().min(1),
-	type: valueTypeSchema,
-	description: z.string().optional(),
-	visibility: z.enum(['public', 'hidden']).default('public'),
-	defaultValue: valuePayloadSchema.optional(),
-	example: z.string().optional(),
-})
+export const valueDefinitionSchema = z
+	.object({
+		id: z.string().min(1),
+		label: z.string().min(1),
+		type: valueTypeSchema,
+		description: z.string().optional(),
+		visibility: z.enum(['public', 'hidden']).default('public'),
+		defaultValue: valuePayloadSchema.optional(),
+		min: z.number().finite().optional(),
+		max: z.number().finite().optional(),
+		maxLength: z.number().int().positive().optional(),
+		example: z.string().optional(),
+	})
+	.superRefine((def, ctx) => {
+		const isNumeric =
+			def.type === 'integer' ||
+			def.type === 'float' ||
+			def.type === 'number'
+		const isArray = def.type === 'array'
+
+		if (!isNumeric && (def.min !== undefined || def.max !== undefined)) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ['min'],
+				message:
+					'min/max are only valid for integer/float/number values',
+			})
+		}
+
+		if (!isArray && def.maxLength !== undefined) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ['maxLength'],
+				message: 'maxLength is only valid for array values',
+			})
+		}
+
+		if (isNumeric) {
+			if (def.type === 'integer') {
+				if (def.min !== undefined && !Number.isInteger(def.min)) {
+					ctx.addIssue({
+						code: z.ZodIssueCode.custom,
+						path: ['min'],
+						message: 'Integer min must be a whole number',
+					})
+				}
+				if (def.max !== undefined && !Number.isInteger(def.max)) {
+					ctx.addIssue({
+						code: z.ZodIssueCode.custom,
+						path: ['max'],
+						message: 'Integer max must be a whole number',
+					})
+				}
+			}
+
+			if (
+				def.min !== undefined &&
+				def.max !== undefined &&
+				def.min > def.max
+			) {
+				ctx.addIssue({
+					code: z.ZodIssueCode.custom,
+					path: ['min'],
+					message: 'min cannot be greater than max',
+				})
+			}
+		}
+	})
 
 export type GameValueDefinition = z.infer<typeof valueDefinitionSchema>
 
