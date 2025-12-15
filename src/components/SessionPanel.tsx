@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react'
 import { motion, useReducedMotion } from 'framer-motion'
 import {
-	SendHorizonal,
+	SendHorizontal,
 	Sparkles,
 	Activity,
 	KeyRound,
@@ -219,7 +219,11 @@ export function SessionPanel({
 		if (!effectiveTemplate || !resolvedSave) {
 			return
 		}
-		effectiveTurn.mutate(playerAction || 'Continue the scene')
+		if (effectiveTurn.isPending) {
+			return
+		}
+		const nextAction = playerAction.trim()
+		effectiveTurn.mutate(nextAction || 'Continue the scene')
 	}
 
 	const handleStartHistoryEdit = (stepId: string) => {
@@ -354,20 +358,27 @@ export function SessionPanel({
 			return undefined
 		}
 		let candidate: unknown = raw
-		try {
-			if (def.type === 'integer') {
-				candidate = Number.parseInt(raw, 10)
-			} else if (def.type === 'float' || def.type === 'number') {
-				candidate = Number.parseFloat(raw)
-			} else if (def.type === 'boolean') {
-				candidate = raw === 'true'
-			} else if (def.type === 'array' || def.type === 'object') {
-				candidate = JSON.parse(raw)
+		if (def.type === 'integer') {
+			candidate = Number.parseInt(raw, 10)
+		} else if (def.type === 'float' || def.type === 'number') {
+			candidate = Number.parseFloat(raw)
+		} else if (def.type === 'boolean') {
+			const lowered = raw.toLowerCase()
+			if (lowered === 'true') {
+				candidate = true
+			} else if (lowered === 'false') {
+				candidate = false
+			} else {
+				throw new Error('Invalid boolean value. Use true or false.')
 			}
-		} catch {
-			throw new Error(
-				`Invalid ${def.type} value. For array/object, enter valid JSON.`
-			)
+		} else if (def.type === 'array' || def.type === 'object') {
+			try {
+				candidate = JSON.parse(raw)
+			} catch {
+				throw new Error(
+					`Invalid ${def.type} value. For array/object, enter valid JSON.`
+				)
+			}
 		}
 
 		const validated = valuePayloadSchema.safeParse(candidate)
@@ -405,7 +416,24 @@ export function SessionPanel({
 	) => {
 		setSessionDefsDraft((current) => {
 			const clone = [...current]
+			const previousId = clone[index]?.id
 			clone[index] = { ...clone[index], ...patch }
+			const nextId = clone[index]?.id
+			if (
+				patch.id !== undefined &&
+				previousId &&
+				nextId &&
+				previousId !== nextId
+			) {
+				setValueDrafts((drafts) => {
+					const nextDrafts = { ...drafts }
+					if (!(nextId in nextDrafts)) {
+						nextDrafts[nextId] = nextDrafts[previousId] ?? ''
+					}
+					delete nextDrafts[previousId]
+					return nextDrafts
+				})
+			}
 			return clone
 		})
 	}
@@ -501,16 +529,24 @@ export function SessionPanel({
 			nextValues[key] = val
 		}
 
-		const updated = await saveWriter.mutateAsync({
-			id: resolvedSave.id,
-			templateId: resolvedSave.templateId,
-			title: resolvedSave.title,
-			summary: resolvedSave.summary,
-			sessionValueDefinitions: sessionDefsDraft,
-			values: nextValues,
-			history: resolvedSave.history,
-		})
-		setLocalSaveOverride(updated)
+		try {
+			const updated = await saveWriter.mutateAsync({
+				id: resolvedSave.id,
+				templateId: resolvedSave.templateId,
+				title: resolvedSave.title,
+				summary: resolvedSave.summary,
+				sessionValueDefinitions: sessionDefsDraft,
+				values: nextValues,
+				history: resolvedSave.history,
+			})
+			setLocalSaveOverride(updated)
+		} catch (error) {
+			setRunValueError(
+				error instanceof Error
+					? error.message
+					: 'Unable to save run values.'
+			)
+		}
 	}
 
 	const handleSaveAsNewTemplate = async () => {
@@ -523,18 +559,27 @@ export function SessionPanel({
 			...resolvedSave,
 			sessionValueDefinitions: sessionDefsDraft,
 		})
-		const created = await templateSaver.mutateAsync({
-			draft: {
-				title: `${template.title} (Run Copy)`,
-				premise: template.premise,
-				genre: template.genre,
-				setting: template.setting,
-				safety: template.safety,
-				instructionBlocks: template.instructionBlocks,
-				valueDefinitions: merged.valueDefinitions,
-			},
-		})
-		setTemplateExportMessage(`Saved new template: ${created.title}`)
+		try {
+			const created = await templateSaver.mutateAsync({
+				draft: {
+					title: `${template.title} (Run Copy)`,
+					premise: template.premise,
+					genre: template.genre,
+					setting: template.setting,
+					safety: template.safety,
+					instructionBlocks: template.instructionBlocks,
+					valueDefinitions: merged.valueDefinitions,
+				},
+			})
+			setTemplateExportMessage(`Saved new template: ${created.title}`)
+		} catch (error) {
+			setTemplateExportMessage(null)
+			setRunValueError(
+				error instanceof Error
+					? error.message
+					: 'Unable to save as a new template.'
+			)
+		}
 	}
 
 	const hasApiKey = Boolean(
@@ -566,15 +611,17 @@ export function SessionPanel({
 								'Design a story template to begin.'}
 						</p>
 					</div>
-					{save && (
+					{resolvedSave && (
 						<div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-2 text-sm text-purple-100">
 							Session updated{' '}
-							{new Date(save.updatedAt).toLocaleTimeString()}
+							{new Date(
+								resolvedSave.updatedAt
+							).toLocaleTimeString()}
 						</div>
 					)}
 				</header>
 
-				{effectiveTemplate && editorTemplate && save && (
+				{effectiveTemplate && editorTemplate && resolvedSave && (
 					<div className="rounded-3xl border border-white/10 bg-white/5 p-5 backdrop-blur">
 						<div className="flex flex-wrap items-center justify-between gap-3">
 							<div>
@@ -902,7 +949,7 @@ export function SessionPanel({
 				)}
 
 				<div className="grid gap-4 md:grid-cols-3">
-					{effectiveTemplate && save ? (
+					{effectiveTemplate && resolvedSave ? (
 						valueBlocks.map(({ id, label, value, meta }) => (
 							<motion.div
 								key={id}
@@ -983,14 +1030,14 @@ export function SessionPanel({
 							type="submit"
 							disabled={
 								!effectiveTemplate ||
-								!save ||
+								!resolvedSave ||
 								effectiveTurn.isPending ||
 								!hasApiKey
 							}
 							whileHover={
 								reduceMotion ||
 								!effectiveTemplate ||
-								!save ||
+								!resolvedSave ||
 								effectiveTurn.isPending ||
 								!hasApiKey
 									? undefined
@@ -999,7 +1046,7 @@ export function SessionPanel({
 							whileTap={
 								reduceMotion ||
 								!effectiveTemplate ||
-								!save ||
+								!resolvedSave ||
 								effectiveTurn.isPending ||
 								!hasApiKey
 									? undefined
@@ -1010,7 +1057,7 @@ export function SessionPanel({
 							{effectiveTurn.isPending
 								? 'Consulting Oracle…'
 								: 'Advance Story'}
-							<SendHorizonal className="h-4 w-4" />
+							<SendHorizontal className="h-4 w-4" />
 						</motion.button>
 					</div>
 					{!hasApiKey && (
@@ -1045,12 +1092,14 @@ export function SessionPanel({
 									disabled={clampedHistoryPage === 0}
 									aria-label="Newer page"
 									whileHover={
-										reduceMotion || clampedHistoryPage === 0
+										reduceMotion ||
+										clampedHistoryPage === 0
 											? undefined
 											: { scale: 1.02 }
 									}
 									whileTap={
-										reduceMotion || clampedHistoryPage === 0
+										reduceMotion ||
+										clampedHistoryPage === 0
 											? undefined
 											: { scale: 0.99 }
 									}
@@ -1059,26 +1108,35 @@ export function SessionPanel({
 									<ChevronLeft className="h-4 w-4" />
 								</motion.button>
 								<span className="rounded-2xl border border-white/10 bg-white/5 px-3 py-1">
-									Page {clampedHistoryPage + 1} of {historyPageCount}
+									Page {clampedHistoryPage + 1} of{' '}
+									{historyPageCount}
 								</span>
 								<motion.button
 									type="button"
 									onClick={() =>
 										setHistoryPage((current) =>
-											Math.min(historyPageCount - 1, current + 1)
+											Math.min(
+												historyPageCount - 1,
+												current + 1
+											)
 										)
 									}
-									disabled={clampedHistoryPage >= historyPageCount - 1}
+									disabled={
+										clampedHistoryPage >=
+										historyPageCount - 1
+									}
 									aria-label="Older page"
 									whileHover={
 										reduceMotion ||
-										clampedHistoryPage >= historyPageCount - 1
+										clampedHistoryPage >=
+											historyPageCount - 1
 											? undefined
 											: { scale: 1.02 }
 									}
 									whileTap={
 										reduceMotion ||
-										clampedHistoryPage >= historyPageCount - 1
+										clampedHistoryPage >=
+											historyPageCount - 1
 											? undefined
 											: { scale: 0.99 }
 									}
@@ -1298,14 +1356,18 @@ export function SessionPanel({
 									</div>
 								</div>
 							)}
-							{entry.stateChanges.length > 0 && (
+							{(entry.stateChanges?.length ?? 0) > 0 && (
 								<ul className="mt-3 text-xs text-emerald-200">
-									{entry.stateChanges.map((change) => (
-										<li key={change.valueId}>
-											<strong>{change.valueId}</strong>:{' '}
-											{JSON.stringify(change.next)}
-										</li>
-									))}
+									{(entry.stateChanges ?? []).map(
+										(change) => (
+											<li key={change.valueId}>
+												<strong>
+													{change.valueId}
+												</strong>
+												: {JSON.stringify(change.next)}
+											</li>
+										)
+									)}
 								</ul>
 							)}
 						</motion.article>
