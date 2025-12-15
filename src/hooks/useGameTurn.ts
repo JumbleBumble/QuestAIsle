@@ -1,7 +1,10 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { GameSave, GameTemplate } from '../types/game'
 import { runGameTurn } from '../utils/openai'
-import { applyChangesToValues } from '../utils/prompting'
+import {
+	applyChangesToMemories,
+	applyChangesToValues,
+} from '../utils/prompting'
 import { persistSave } from '../data/saves'
 import { saveKeys } from './useSaveQueries'
 
@@ -11,12 +14,18 @@ export type RunSettings = {
 	memoryTurnCount?: number | null
 }
 
-export function useGameTurn(template?: GameTemplate, save?: GameSave, settings?: RunSettings) {
+export function useGameTurn(
+	template?: GameTemplate,
+	save?: GameSave,
+	settings?: RunSettings
+) {
 	const client = useQueryClient()
 	return useMutation({
 		mutationFn: async (playerAction: string) => {
 			if (!template || !save) {
-				throw new Error('Select a template and save before advancing the story.')
+				throw new Error(
+					'Select a template and save before advancing the story.'
+				)
 			}
 			const result = await runGameTurn({
 				template,
@@ -26,7 +35,15 @@ export function useGameTurn(template?: GameTemplate, save?: GameSave, settings?:
 				model: settings?.model,
 				memoryTurnCount: settings?.memoryTurnCount ?? undefined,
 			})
-			const updatedValues = applyChangesToValues(template, save.values, result.stateChanges)
+			const updatedValues = applyChangesToValues(
+				template,
+				save.values,
+				result.stateChanges
+			)
+			const updatedMemories = applyChangesToMemories(
+				save.memories ?? [],
+				result.memoryChanges ?? []
+			)
 			const step = {
 				id: crypto.randomUUID(),
 				playerAction: playerAction || 'Continue',
@@ -47,6 +64,7 @@ export function useGameTurn(template?: GameTemplate, save?: GameSave, settings?:
 				title: save.title,
 				summary: result.summary ?? save.summary,
 				values: updatedValues,
+				memories: updatedMemories,
 				history: [...save.history, step],
 			})
 
@@ -54,22 +72,31 @@ export function useGameTurn(template?: GameTemplate, save?: GameSave, settings?:
 		},
 		onSuccess: (data) => {
 			if (template) {
-				client.setQueryData(saveKeys.byTemplate(template.id), (current?: GameSave[]) => {
-					if (!current) {
-						return data?.updatedSave ? [data.updatedSave] : current
+				client.setQueryData(
+					saveKeys.byTemplate(template.id),
+					(current?: GameSave[]) => {
+						if (!current) {
+							return data?.updatedSave
+								? [data.updatedSave]
+								: current
+						}
+						if (!data?.updatedSave) {
+							return current
+						}
+						const idx = current.findIndex(
+							(save) => save.id === data.updatedSave.id
+						)
+						if (idx === -1) {
+							return [data.updatedSave, ...current]
+						}
+						const clone = [...current]
+						clone[idx] = data.updatedSave
+						return clone
 					}
-					if (!data?.updatedSave) {
-						return current
-					}
-					const idx = current.findIndex((save) => save.id === data.updatedSave.id)
-					if (idx === -1) {
-						return [data.updatedSave, ...current]
-					}
-					const clone = [...current]
-					clone[idx] = data.updatedSave
-					return clone
+				)
+				client.invalidateQueries({
+					queryKey: saveKeys.byTemplate(template.id),
 				})
-				client.invalidateQueries({ queryKey: saveKeys.byTemplate(template.id) })
 			}
 			client.invalidateQueries({ queryKey: saveKeys.all })
 		},

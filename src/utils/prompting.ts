@@ -2,6 +2,7 @@ import { z } from 'zod'
 import {
 	GameSave,
 	GameTemplate,
+	GameMemoryEntry,
 	GameValueDefinition,
 	GameValuePayload,
 	PromptPacket,
@@ -77,6 +78,51 @@ export const stepResultSchema = z.object({
 			}),
 		)
 		.default([]),
+	memoryChanges: z
+		.array(
+			z
+				.object({
+					op: z.enum(['add', 'update', 'remove']),
+					id: z.preprocess(
+						(value) => (value === null ? undefined : value),
+						z.string().optional(),
+					),
+					text: z.preprocess(
+						(value) => (value === null ? undefined : value),
+						z.string().optional(),
+					),
+					tags: z.preprocess(
+						(value) => (value === null ? undefined : value),
+						z.array(z.string()).optional(),
+					),
+					reason: z.preprocess(
+						(value) => (value === null ? undefined : value),
+						z.string().optional(),
+					),
+				})
+				.superRefine((change, ctx) => {
+					if (change.op === 'add') {
+						if (!change.text?.trim()) {
+							ctx.addIssue({
+								code: z.ZodIssueCode.custom,
+								path: ['text'],
+								message: 'memoryChanges.add requires text',
+							})
+						}
+					}
+
+					if (change.op === 'update' || change.op === 'remove') {
+						if (!change.id?.trim()) {
+							ctx.addIssue({
+								code: z.ZodIssueCode.custom,
+								path: ['id'],
+								message: `memoryChanges.${change.op} requires id`,
+							})
+						}
+					}
+				}),
+		)
+		.default([]),
 	journalEntry: z.string().optional(),
 	playerOptions: z.array(z.string()).optional(),
 })
@@ -110,20 +156,32 @@ export function buildPromptPacket(args: {
 		})
 		.join('\n')
 
+	const memories = (save.memories ?? []).slice(-20)
+	const memoryLines = memories
+		.map((entry) => {
+			const tagPart = entry.tags?.length ? ` [${entry.tags.join(', ')}]` : ''
+			return `- (${entry.id}) ${entry.text}${tagPart}`
+		})
+		.join('\n')
+
 	errorIfMissing(template)
 
 	const systemPrompt = `You are an AI game master running the narrative "${template.title}".
 Setting: ${template.setting ?? 'Flexible'}
 Premise: ${template.premise ?? 'Player-driven'}
 Safety Guardrails: ${template.safety ?? 'Keep it safe, heroic, and PG-13.'}
-Never break character. Update tracked values only when required. Always obey the template instructions below.
+Never break character. Update tracked values only when required. Maintain a hidden long-term memory list of important facts, promises, NPC details, unresolved threats, and key discoveries. Only surface those memories indirectly through the narrative when relevant. Always obey the template instructions below.
 ${template.instructionBlocks.map((block, index) => `[Block ${index + 1}] ${block}`).join('\n\n')}`
 
 	const userPrompt = `Player Action: ${playerAction || 'Continue the adventure.'}
 Current Values:\n${valueLines || 'No tracked values yet.'}
+Long-Term Memory (hidden, GM-only):\n${memoryLines || 'None yet.'}
 Recent Turns:\n${recentSteps || 'First turn — provide an exciting opener.'}
 
-Respond with a cinematic paragraph that advances the story, then describe every tracked value you changed.`
+Respond with a cinematic paragraph that advances the story, then describe every tracked value you changed.
+
+Also include memoryChanges to add/update/remove any long-term memory entries that should persist across future turns.
+Each memoryChanges item MUST include keys: op, id, text, tags, reason. Use null for unused fields.`
 
 	return { system: systemPrompt, user: userPrompt }
 }
@@ -156,7 +214,7 @@ export function buildResponseFormat(template: GameTemplate) {
 			name: `game_step_${template.slug}`,
 				schema: {
 					type: 'object',
-					required: ['narrative', 'summary', 'journalEntry', 'playerOptions', 'stateChanges'],
+					required: ['narrative', 'summary', 'journalEntry', 'playerOptions', 'stateChanges', 'memoryChanges'],
 					additionalProperties: false,
 					properties: {
 						narrative: { type: 'string', description: 'Main cinematic narration returned to the player.' },
@@ -178,6 +236,28 @@ export function buildResponseFormat(template: GameTemplate) {
 								valueLabel: { type: 'string' },
 								next: anyValueJsonSchema,
 								reason: { type: 'string' },
+							},
+						},
+					},
+					memoryChanges: {
+						type: 'array',
+						description:
+							'Hidden long-term memory operations. Use add/update/remove to keep important story facts persistent across turns.',
+						items: {
+							type: 'object',
+							required: ['op', 'id', 'text', 'tags', 'reason'],
+							additionalProperties: false,
+							properties: {
+								op: { type: 'string', enum: ['add', 'update', 'remove'] },
+								id: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+								text: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+								tags: {
+									anyOf: [
+										{ type: 'array', items: { type: 'string' } },
+										{ type: 'null' },
+									],
+								},
+								reason: { anyOf: [{ type: 'string' }, { type: 'null' }] },
 							},
 						},
 					},
@@ -257,5 +337,73 @@ export function applyChangesToValues(
 		}
 		updated[change.valueId] = coerceValueForType(definition, change.next)
 	}
+	return updated
+}
+
+type MemoryChangeCandidate = z.infer<typeof stepResultSchema>['memoryChanges'][number]
+
+export function applyChangesToMemories(
+	currentMemories: GameMemoryEntry[],
+	changes: MemoryChangeCandidate[],
+) {
+	const now = new Date().toISOString()
+	let updated = [...(currentMemories ?? [])]
+	const ids = new Set(updated.map((entry) => entry.id))
+
+	for (const change of changes ?? []) {
+		if (change.op === 'remove') {
+			const id = (change.id ?? '').trim()
+			if (!id) {
+				continue
+			}
+			updated = updated.filter((entry) => entry.id !== id)
+			ids.delete(id)
+			continue
+		}
+
+		if (change.op === 'update') {
+			const id = (change.id ?? '').trim()
+			if (!id) {
+				continue
+			}
+			updated = updated.map((entry) => {
+				if (entry.id !== id) {
+					return entry
+				}
+				return {
+					...entry,
+					text: change.text?.trim() ? change.text : entry.text,
+					tags: change.tags ?? entry.tags,
+					updatedAt: now,
+				}
+			})
+			continue
+		}
+
+		if (change.op === 'add') {
+			const trimmedText = (change.text ?? '').trim()
+			if (!trimmedText) {
+				continue
+			}
+			let id = (change.id ?? '').trim()
+			if (!id || ids.has(id)) {
+				id = crypto.randomUUID()
+			}
+			ids.add(id)
+			updated.push({
+				id,
+				text: trimmedText,
+				tags: change.tags ?? [],
+				createdAt: now,
+				updatedAt: now,
+			})
+		}
+	}
+
+	const MAX_MEMORIES = 50
+	if (updated.length > MAX_MEMORIES) {
+		updated = updated.slice(updated.length - MAX_MEMORIES)
+	}
+
 	return updated
 }

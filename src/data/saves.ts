@@ -10,12 +10,15 @@ export type SaveDraft = {
 	summary?: string
 	sessionValueDefinitions?: GameSave['sessionValueDefinitions']
 	values: GameSave['values']
+	memories?: GameSave['memories']
 	history?: GameSave['history']
 }
 
 export async function listSaves(templateFilter?: string) {
 	const saves = await listJsonRecords(SAVES_DIR, saveSchema)
-	const filtered = templateFilter ? saves.filter((save) => save.templateId === templateFilter) : saves
+	const filtered = templateFilter
+		? saves.filter((save) => save.templateId === templateFilter)
+		: saves
 	return filtered.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
 }
 
@@ -29,14 +32,22 @@ export async function removeSave(id: string) {
 
 export async function persistSave(draft: SaveDraft, existing?: GameSave) {
 	const now = new Date().toISOString()
-	const base = existing ?? (draft.id ? await loadSave(draft.id).catch(() => undefined) : undefined)
+	const base =
+		existing ??
+		(draft.id
+			? await loadSave(draft.id).catch(() => undefined)
+			: undefined)
 	const save: GameSave = {
 		id: base?.id ?? draft.id ?? crypto.randomUUID(),
 		templateId: draft.templateId,
 		title: draft.title,
 		summary: draft.summary ?? base?.summary,
-		sessionValueDefinitions: draft.sessionValueDefinitions ?? base?.sessionValueDefinitions ?? [],
+		sessionValueDefinitions:
+			draft.sessionValueDefinitions ??
+			base?.sessionValueDefinitions ??
+			[],
 		values: draft.values,
+		memories: draft.memories ?? base?.memories ?? [],
 		history: draft.history ?? base?.history ?? [],
 		createdAt: base?.createdAt ?? now,
 		updatedAt: now,

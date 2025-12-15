@@ -137,6 +137,16 @@ export const stepSchema = z.object({
 
 export type GameStep = z.infer<typeof stepSchema>
 
+export const memoryEntrySchema = z.object({
+	id: z.string().min(1),
+	text: z.string().min(1),
+	tags: z.array(z.string()).default([]),
+	createdAt: z.string(),
+	updatedAt: z.string(),
+})
+
+export type GameMemoryEntry = z.infer<typeof memoryEntrySchema>
+
 export const saveSchema = z.object({
 	id: z.string(),
 	templateId: z.string(),
@@ -144,6 +154,7 @@ export const saveSchema = z.object({
 	summary: z.string().optional(),
 	sessionValueDefinitions: z.array(valueDefinitionSchema).default([]),
 	values: z.record(z.string(), valuePayloadSchema),
+	memories: z.array(memoryEntrySchema).default([]),
 	history: z.array(stepSchema),
 	createdAt: z.string(),
 	updatedAt: z.string(),
