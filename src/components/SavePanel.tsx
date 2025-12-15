@@ -83,7 +83,7 @@ export function SavePanel({
 				</motion.button>
 			</header>
 
-			<div className="mt-4 space-y-3">
+			<div className="mt-4 max-h-[45vh] space-y-3 overflow-y-auto pr-2">
 				{savesQuery.isLoading && (
 					<p className="text-sm text-slate-300">Loading saves…</p>
 				)}

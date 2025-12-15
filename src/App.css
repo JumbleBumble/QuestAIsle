@@ -6,6 +6,8 @@
   line-height: 24px;
   font-weight: 400;
 
+  color-scheme: dark;
+
   color: #0f0f0f;
   background-color: #f6f6f6;
 
@@ -30,4 +32,60 @@
 .qa-typewriter-char {
   display: inline-block;
   animation: qa-typewriter-char-in 120ms ease-out both;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.32) rgba(0, 0, 0, 0.45);
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-track-piece {
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 9999px;
+  margin: 3px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.30);
+  border-radius: 9999px;
+  border: 3px solid rgba(0, 0, 0, 0.55);
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.42);
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+html,
+body {
+  scrollbar-color: rgba(255, 255, 255, 0.34) rgba(0, 0, 0, 0.70);
+}
+
+html::-webkit-scrollbar-track-piece,
+body::-webkit-scrollbar-track-piece {
+  background: rgba(0, 0, 0, 0.62);
+}
+
+html::-webkit-scrollbar-thumb,
+body::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.34);
+  border: 3px solid rgba(0, 0, 0, 0.72);
+}
+
+html::-webkit-scrollbar-thumb:hover,
+body::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.48);
 }

@@ -480,111 +480,118 @@ export function TemplatePanel() {
 							No templates yet. Create one to begin.
 						</p>
 					)}
-					<div className="grid gap-4">
-						{templates.map((template) => (
-							<motion.div
-								key={template.slug}
-								onClick={() =>
-									setActiveTemplate(template.slug)
-								}
-								onKeyDown={(event) => {
-									if (
-										event.key === 'Enter' ||
-										event.key === ' '
-									) {
-										event.preventDefault()
+					<div className="max-h-[45vh] overflow-y-auto pr-2">
+						<div className="grid gap-4">
+							{templates.map((template) => (
+								<motion.div
+									key={template.slug}
+									onClick={() =>
 										setActiveTemplate(template.slug)
 									}
-								}}
-								role="button"
-								tabIndex={0}
-								whileHover={{ scale: 1.01 }}
-								whileTap={{ scale: 0.99 }}
-								className={`rounded-2xl border px-4 py-4 text-left transition focus:outline-none focus:ring-2 focus:ring-purple-400 ${
-									activeTemplateSlug === template.slug
-										? 'border-purple-400/70 bg-purple-400/10 text-white'
-										: 'border-white/10 bg-white/5 text-purple-100'
-								}`}
-							>
-								<div className="flex items-center justify-between">
-									<h3 className="text-lg font-semibold">
-										{template.title}
-									</h3>
-									<div className="flex items-center gap-3">
-										<motion.button
-											type="button"
-											onClick={(event) => {
-												event.stopPropagation()
-												handleEditTemplateAsCopy(
-													template
-												)
-											}}
-											whileHover={
-												reduceMotion
-													? undefined
-													: { scale: 1.02 }
-											}
-											whileTap={
-												reduceMotion
-													? undefined
-													: { scale: 0.98 }
-											}
-											className="text-xs text-purple-200 hover:text-white"
-										>
-											Edit
-										</motion.button>
-										<motion.button
-											type="button"
-											onClick={(event) => {
-												event.stopPropagation()
-												const wasActive =
-													activeTemplateSlug ===
-													template.slug
-												remover.mutate(template.slug, {
-													onSuccess: () => {
-														if (wasActive) {
-															setActiveTemplate(
-																null
-															)
+									onKeyDown={(event) => {
+										if (
+											event.key === 'Enter' ||
+											event.key === ' '
+										) {
+											event.preventDefault()
+											setActiveTemplate(template.slug)
+										}
+									}}
+									role="button"
+									tabIndex={0}
+									whileHover={{ scale: 1.01 }}
+									whileTap={{ scale: 0.99 }}
+									className={`rounded-2xl border px-4 py-4 text-left transition focus:outline-none focus:ring-2 focus:ring-purple-400 ${
+										activeTemplateSlug === template.slug
+											? 'border-purple-400/70 bg-purple-400/10 text-white'
+											: 'border-white/10 bg-white/5 text-purple-100'
+									}`}
+								>
+									<div className="flex items-center justify-between">
+										<h3 className="text-lg font-semibold">
+											{template.title}
+										</h3>
+										<div className="flex items-center gap-3">
+											<motion.button
+												type="button"
+												onClick={(event) => {
+													event.stopPropagation()
+													handleEditTemplateAsCopy(
+														template
+													)
+												}}
+												whileHover={
+													reduceMotion
+														? undefined
+														: { scale: 1.02 }
+												}
+												whileTap={
+													reduceMotion
+														? undefined
+														: { scale: 0.98 }
+												}
+												className="text-xs text-purple-200 hover:text-white"
+											>
+												Edit
+											</motion.button>
+											<motion.button
+												type="button"
+												onClick={(event) => {
+													event.stopPropagation()
+													const wasActive =
+														activeTemplateSlug ===
+														template.slug
+													remover.mutate(
+														template.slug,
+														{
+															onSuccess: () => {
+																if (
+																	wasActive
+																) {
+																	setActiveTemplate(
+																		null
+																	)
+																}
+															},
 														}
-													},
-												})
-											}}
-											whileHover={
-												reduceMotion
-													? undefined
-													: { scale: 1.05 }
-											}
-											whileTap={
-												reduceMotion
-													? undefined
-													: { scale: 0.98 }
-											}
-											className="text-xs text-red-200 hover:text-red-100"
-										>
-											<Trash2 className="h-4 w-4" />
-										</motion.button>
+													)
+												}}
+												whileHover={
+													reduceMotion
+														? undefined
+														: { scale: 1.05 }
+												}
+												whileTap={
+													reduceMotion
+														? undefined
+														: { scale: 0.98 }
+												}
+												className="text-xs text-red-200 hover:text-red-100"
+											>
+												<Trash2 className="h-4 w-4" />
+											</motion.button>
+										</div>
 									</div>
-								</div>
-								<p className="mt-1 text-sm text-purple-100/70">
-									{template.premise?.trim().length
-										? truncateText(
-												template.premise,
-												PREMISE_PREVIEW_MAX_LEN
-										  )
-										: 'Player-driven narrative'}
-								</p>
-								<div className="mt-3 flex flex-wrap gap-2 text-xs text-purple-100/70">
-									<span className="rounded-xl bg-purple-500/20 px-2 py-1">
-										{template.genre ?? 'Any Genre'}
-									</span>
-									<span className="rounded-xl bg-purple-500/20 px-2 py-1">
-										{template.valueDefinitions.length}{' '}
-										values
-									</span>
-								</div>
-							</motion.div>
-						))}
+									<p className="mt-1 text-sm text-purple-100/70">
+										{template.premise?.trim().length
+											? truncateText(
+													template.premise,
+													PREMISE_PREVIEW_MAX_LEN
+											  )
+											: 'Player-driven narrative'}
+									</p>
+									<div className="mt-3 flex flex-wrap gap-2 text-xs text-purple-100/70">
+										<span className="rounded-xl bg-purple-500/20 px-2 py-1">
+											{template.genre ?? 'Any Genre'}
+										</span>
+										<span className="rounded-xl bg-purple-500/20 px-2 py-1">
+											{template.valueDefinitions.length}{' '}
+											values
+										</span>
+									</div>
+								</motion.div>
+							))}
+						</div>
 					</div>
 				</Tabs.Content>
 
