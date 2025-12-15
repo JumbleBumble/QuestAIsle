@@ -24,8 +24,8 @@ import { useGameStore } from '../state/useGameStore'
 import { useGameTurn } from '../hooks/useGameTurn'
 import { AppSettings } from '../data/settings'
 import { buildEffectiveTemplate } from '../utils/effectiveTemplate'
-import { coerceValueForType } from '../utils/prompting'
-import { useSaveWriter } from '../hooks/useSaveQueries'
+import { buildInitialValues, coerceValueForType } from '../utils/prompting'
+import { useSaveWriter, useSavesQuery } from '../hooks/useSaveQueries'
 import { useTemplateSaver } from '../hooks/useTemplateQueries'
 
 export function SessionPanel({
@@ -41,7 +41,9 @@ export function SessionPanel({
 	const playerAction = useGameStore((state) => state.playerAction)
 	const setPlayerAction = useGameStore((state) => state.setPlayerAction)
 	const setAdvancing = useGameStore((state) => state.setAdvancing)
+	const setActiveSave = useGameStore((state) => state.setActiveSave)
 	const saveWriter = useSaveWriter()
+	const savesQuery = useSavesQuery(template ? template.id : null)
 	const templateSaver = useTemplateSaver()
 	const [isEditingValues, setIsEditingValues] = useState(false)
 	const [localSaveOverride, setLocalSaveOverride] =
@@ -224,6 +226,28 @@ export function SessionPanel({
 		}
 		const nextAction = playerAction.trim()
 		effectiveTurn.mutate(nextAction || 'Continue the scene')
+	}
+
+	const canStartFirstRun =
+		Boolean(template) &&
+		!savesQuery.isLoading &&
+		(savesQuery.data?.length ?? 0) === 0
+
+	const handleStartFirstRun = async () => {
+		if (!template) {
+			return
+		}
+		if (saveWriter.isPending) {
+			return
+		}
+		const values = buildInitialValues(template)
+		const created = await saveWriter.mutateAsync({
+			templateId: template.id,
+			title: `${template.title} Run ${new Date().toLocaleDateString()}`,
+			values,
+			history: [],
+		})
+		setActiveSave(created.id)
 	}
 
 	const handleStartHistoryEdit = (stepId: string) => {
@@ -1026,39 +1050,66 @@ export function SessionPanel({
 							Use vivid verbs & objectives. The AI will respect
 							tracked values.
 						</p>
-						<motion.button
-							type="submit"
-							disabled={
-								!effectiveTemplate ||
-								!resolvedSave ||
-								effectiveTurn.isPending ||
-								!hasApiKey
-							}
-							whileHover={
-								reduceMotion ||
-								!effectiveTemplate ||
-								!resolvedSave ||
-								effectiveTurn.isPending ||
-								!hasApiKey
+						<div className="flex flex-wrap items-center gap-2">
+							{canStartFirstRun && (
+								<motion.button
+									type="button"
+									onClick={handleStartFirstRun}
+									disabled={!template || saveWriter.isPending}
+									whileHover={
+										reduceMotion ||
+										!template ||
+										saveWriter.isPending
+											? undefined
+											: { scale: 1.01 }
+									}
+									whileTap={
+										reduceMotion ||
+										!template ||
+										saveWriter.isPending
+											? undefined
+											: { scale: 0.99 }
+									}
+									className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/10 px-5 py-3 text-sm font-semibold text-white transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-40"
+								>
+									<PlusCircle className="h-4 w-4" />
+									Start first run
+								</motion.button>
+							)}
+							<motion.button
+								type="submit"
+								disabled={
+									!effectiveTemplate ||
+									!resolvedSave ||
+									effectiveTurn.isPending ||
+									!hasApiKey
+								}
+								whileHover={
+									reduceMotion ||
+									!effectiveTemplate ||
+									!resolvedSave ||
+									effectiveTurn.isPending ||
+									!hasApiKey
 									? undefined
 									: { scale: 1.01 }
-							}
-							whileTap={
-								reduceMotion ||
-								!effectiveTemplate ||
-								!resolvedSave ||
-								effectiveTurn.isPending ||
-								!hasApiKey
+								}
+								whileTap={
+									reduceMotion ||
+									!effectiveTemplate ||
+									!resolvedSave ||
+									effectiveTurn.isPending ||
+									!hasApiKey
 									? undefined
 									: { scale: 0.99 }
-							}
-							className="inline-flex items-center gap-2 rounded-2xl bg-linear-to-r from-indigo-500 to-fuchsia-500 px-5 py-3 text-sm font-semibold shadow-lg shadow-indigo-500/30 disabled:cursor-not-allowed disabled:opacity-40"
-						>
-							{effectiveTurn.isPending
-								? 'Consulting Oracle…'
-								: 'Advance Story'}
-							<SendHorizontal className="h-4 w-4" />
-						</motion.button>
+								}
+								className="inline-flex items-center gap-2 rounded-2xl bg-linear-to-r from-indigo-500 to-fuchsia-500 px-5 py-3 text-sm font-semibold shadow-lg shadow-indigo-500/30 disabled:cursor-not-allowed disabled:opacity-40"
+							>
+								{effectiveTurn.isPending
+									? 'Consulting Oracle…'
+									: 'Advance Story'}
+								<SendHorizontal className="h-4 w-4" />
+							</motion.button>
+						</div>
 					</div>
 					{!hasApiKey && (
 						<p className="mt-2 inline-flex items-center gap-2 rounded-2xl border border-amber-400/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
