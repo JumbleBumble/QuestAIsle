@@ -95,6 +95,19 @@ const defaultValues: TemplateFormValues = {
 	],
 }
 
+const PREMISE_PREVIEW_MAX_LEN = 180
+
+function truncateText(value: string, maxLen: number) {
+	const trimmed = value.trim()
+	if (trimmed.length <= maxLen) {
+		return trimmed
+	}
+	if (maxLen <= 1) {
+		return '…'
+	}
+	return `${trimmed.slice(0, maxLen - 1).trimEnd()}…`
+}
+
 function parseDefaultValue(
 	def: ValueDefinitionForm
 ): GameValueDefinition['defaultValue'] {
@@ -400,7 +413,7 @@ export function TemplatePanel() {
 							No templates yet. Create one to begin.
 						</p>
 					)}
-					<div className="grid gap-4 md:grid-cols-2">
+					<div className="grid gap-4">
 						{templates.map((template) => (
 							<motion.div
 								key={template.slug}
@@ -482,14 +495,18 @@ export function TemplatePanel() {
 									</div>
 								</div>
 								<p className="mt-1 text-sm text-purple-100/70">
-									{template.premise ??
-										'Player-driven narrative'}
+									{template.premise?.trim().length
+										? truncateText(
+												template.premise,
+												PREMISE_PREVIEW_MAX_LEN
+											)
+										: 'Player-driven narrative'}
 								</p>
 								<div className="mt-3 flex flex-wrap gap-2 text-xs text-purple-100/70">
-									<span className="rounded-full bg-purple-500/20 px-2 py-1">
+									<span className="rounded-xl bg-purple-500/20 px-2 py-1">
 										{template.genre ?? 'Any Genre'}
 									</span>
-									<span className="rounded-full bg-purple-500/20 px-2 py-1">
+									<span className="rounded-xl bg-purple-500/20 px-2 py-1">
 										{template.valueDefinitions.length}{' '}
 										values
 									</span>
