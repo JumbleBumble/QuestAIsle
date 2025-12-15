@@ -268,8 +268,16 @@ Ensure each tracked value has a concise snake_case id, a descriptive label, and 
 
 function extractJsonPayload(response: any) {
 	const attempts: string[] = []
-	if ('output_text' in response && response.output_text?.length) {
-		attempts.push(...response.output_text)
+	if ('output_text' in response && response.output_text) {
+		if (typeof response.output_text === 'string') {
+			attempts.push(response.output_text)
+		} else if (Array.isArray(response.output_text)) {
+			for (const item of response.output_text) {
+				if (typeof item === 'string') {
+					attempts.push(item)
+				}
+			}
+		}
 	}
 
 	for (const block of response.output ?? []) {

@@ -72,10 +72,9 @@ export const stepResultSchema = z.object({
 		.array(
 			z.object({
 				valueId: z.string(),
-				valueLabel: z.string().optional(),
 				next: valuePayloadSchema,
 				reason: z.string().optional(),
-			}),
+			})
 		)
 		.default([]),
 	memoryChanges: z
@@ -85,19 +84,15 @@ export const stepResultSchema = z.object({
 					op: z.enum(['add', 'update', 'remove']),
 					id: z.preprocess(
 						(value) => (value === null ? undefined : value),
-						z.string().optional(),
+						z.string().optional()
 					),
 					text: z.preprocess(
 						(value) => (value === null ? undefined : value),
-						z.string().optional(),
+						z.string().optional()
 					),
 					tags: z.preprocess(
 						(value) => (value === null ? undefined : value),
-						z.array(z.string()).optional(),
-					),
-					reason: z.preprocess(
-						(value) => (value === null ? undefined : value),
-						z.string().optional(),
+						z.array(z.string()).optional()
 					),
 				})
 				.superRefine((change, ctx) => {
@@ -120,11 +115,10 @@ export const stepResultSchema = z.object({
 							})
 						}
 					}
-				}),
+				})
 		)
 		.default([]),
-	journalEntry: z.string().optional(),
-	playerOptions: z.array(z.string()).optional(),
+	playerOptions: z.array(z.string()).default([]),
 })
 
 export type StepResult = z.infer<typeof stepResultSchema>
@@ -140,7 +134,9 @@ export function buildPromptPacket(args: {
 	const valueLines = template.valueDefinitions
 		.map(
 			(def) =>
-				`- ${def.label} (${def.type} :: ${def.id})${formatConstraints(def)} = ${formatValue(def, snapshot[def.id])}`,
+				`- ${def.label} (${def.type} :: ${def.id})${formatConstraints(
+					def
+				)} = ${formatValue(def, snapshot[def.id])}`
 		)
 		.join('\n')
 	const turnWindow = Math.max(1, Math.min(10, memoryTurnCount ?? 4))
@@ -151,7 +147,9 @@ export function buildPromptPacket(args: {
 				.filter((change) => Boolean(change.reason?.trim()))
 				.map((change) => `    - ${change.valueId}: ${change.reason}`)
 				.join('\n')
-			const changeBlock = changeReasons ? `\n  Value Changes:\n${changeReasons}` : ''
+			const changeBlock = changeReasons
+				? `\n  Value Changes:\n${changeReasons}`
+				: ''
 			return `• Player: ${step.playerAction}\n  GM: ${step.narrative}${changeBlock}`
 		})
 		.join('\n')
@@ -159,21 +157,29 @@ export function buildPromptPacket(args: {
 	const memories = (save.memories ?? []).slice(-20)
 	const memoryLines = memories
 		.map((entry) => {
-			const tagPart = entry.tags?.length ? ` [${entry.tags.join(', ')}]` : ''
+			const tagPart = entry.tags?.length
+				? ` [${entry.tags.join(', ')}]`
+				: ''
 			return `- (${entry.id}) ${entry.text}${tagPart}`
 		})
 		.join('\n')
 
 	errorIfMissing(template)
 
-	const systemPrompt = `You are an AI game master running the narrative "${template.title}".
+	const systemPrompt = `You are an AI game master running the narrative "${
+		template.title
+	}".
 Setting: ${template.setting ?? 'Flexible'}
 Premise: ${template.premise ?? 'Player-driven'}
 Safety Guardrails: ${template.safety ?? 'Keep it safe, heroic, and PG-13.'}
 Never break character. Update tracked values only when required. Maintain a hidden long-term memory list of important facts, promises, NPC details, unresolved threats, and key discoveries. Only surface those memories indirectly through the narrative when relevant. Always obey the template instructions below.
-${template.instructionBlocks.map((block, index) => `[Block ${index + 1}] ${block}`).join('\n\n')}`
+${template.instructionBlocks
+	.map((block, index) => `[Block ${index + 1}] ${block}`)
+	.join('\n\n')}`
 
-	const userPrompt = `Player Action: ${playerAction || 'Continue the adventure.'}
+	const userPrompt = `Player Action: ${
+		playerAction || 'Continue the adventure.'
+	}
 Current Values:\n${valueLines || 'No tracked values yet.'}
 Long-Term Memory (hidden, GM-only):\n${memoryLines || 'None yet.'}
 Recent Turns:\n${recentSteps || 'First turn — provide an exciting opener.'}
@@ -181,18 +187,22 @@ Recent Turns:\n${recentSteps || 'First turn — provide an exciting opener.'}
 Respond with a cinematic paragraph that advances the story, then describe every tracked value you changed.
 
 Also include memoryChanges to add/update/remove any long-term memory entries that should persist across future turns.
-Each memoryChanges item MUST include keys: op, id, text, tags, reason. Use null for unused fields.`
+Each memoryChanges item MUST include keys: op, id, text, tags. Use null for unused fields.`
 
 	return { system: systemPrompt, user: userPrompt }
 }
 
 function errorIfMissing(template: GameTemplate) {
 	if (!template.valueDefinitions.length) {
-		throw new Error('Templates require at least one value definition to build prompts.')
+		throw new Error(
+			'Templates require at least one value definition to build prompts.'
+		)
 	}
 }
 
-const scalarJsonSchema = { anyOf: [{ type: 'string' }, { type: 'number' }, { type: 'boolean' }] }
+const scalarJsonSchema = {
+	anyOf: [{ type: 'string' }, { type: 'number' }, { type: 'boolean' }],
+}
 
 const anyValueJsonSchema = {
 	anyOf: [
@@ -201,7 +211,10 @@ const anyValueJsonSchema = {
 		{
 			type: 'object',
 			additionalProperties: {
-				anyOf: [scalarJsonSchema, { type: 'array', items: scalarJsonSchema }],
+				anyOf: [
+					scalarJsonSchema,
+					{ type: 'array', items: scalarJsonSchema },
+				],
 			},
 		},
 	],
@@ -212,28 +225,45 @@ export function buildResponseFormat(template: GameTemplate) {
 		type: 'json_schema' as const,
 		json_schema: {
 			name: `game_step_${template.slug}`,
-				schema: {
-					type: 'object',
-					required: ['narrative', 'summary', 'journalEntry', 'playerOptions', 'stateChanges', 'memoryChanges'],
-					additionalProperties: false,
-					properties: {
-						narrative: { type: 'string', description: 'Main cinematic narration returned to the player.' },
-						summary: { type: 'string', description: 'One sentence recap of the turn.' },
-						journalEntry: { type: 'string', description: 'Optional log line to persist in journals.' },
-						playerOptions: {
+			schema: {
+				type: 'object',
+				required: [
+					'narrative',
+					'summary',
+					'playerOptions',
+					'stateChanges',
+					'memoryChanges',
+				],
+				additionalProperties: false,
+				properties: {
+					narrative: {
+						type: 'string',
+						description:
+							'Main cinematic narration returned to the player.',
+					},
+					summary: {
+						type: 'string',
+						description: 'One sentence recap of the turn.',
+					},
+					playerOptions: {
 						type: 'array',
 						items: { type: 'string' },
-						description: 'Suggested next moves or prompts for the player.',
+						description:
+							'Suggested next moves or prompts for the player.',
 					},
 					stateChanges: {
 						type: 'array',
 						items: {
 							type: 'object',
-							required: ['valueId', 'valueLabel', 'next', 'reason'],
+							required: ['valueId', 'next', 'reason'],
 							additionalProperties: false,
 							properties: {
-								valueId: { type: 'string', enum: template.valueDefinitions.map((def) => def.id) },
-								valueLabel: { type: 'string' },
+								valueId: {
+									type: 'string',
+									enum: template.valueDefinitions.map(
+										(def) => def.id
+									),
+								},
 								next: anyValueJsonSchema,
 								reason: { type: 'string' },
 							},
@@ -245,19 +275,34 @@ export function buildResponseFormat(template: GameTemplate) {
 							'Hidden long-term memory operations. Use add/update/remove to keep important story facts persistent across turns.',
 						items: {
 							type: 'object',
-							required: ['op', 'id', 'text', 'tags', 'reason'],
+							required: ['op', 'id', 'text', 'tags'],
 							additionalProperties: false,
 							properties: {
-								op: { type: 'string', enum: ['add', 'update', 'remove'] },
-								id: { anyOf: [{ type: 'string' }, { type: 'null' }] },
-								text: { anyOf: [{ type: 'string' }, { type: 'null' }] },
-								tags: {
+								op: {
+									type: 'string',
+									enum: ['add', 'update', 'remove'],
+								},
+								id: {
 									anyOf: [
-										{ type: 'array', items: { type: 'string' } },
+										{ type: 'string' },
 										{ type: 'null' },
 									],
 								},
-								reason: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+								text: {
+									anyOf: [
+										{ type: 'string' },
+										{ type: 'null' },
+									],
+								},
+								tags: {
+									anyOf: [
+										{
+											type: 'array',
+											items: { type: 'string' },
+										},
+										{ type: 'null' },
+									],
+								},
 							},
 						},
 					},
