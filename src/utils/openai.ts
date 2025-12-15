@@ -10,15 +10,30 @@ export type GameTurnParams = {
 	apiKey?: string | null
 	model?: string | null
 	memoryTurnCount?: number | null
+	onNarrativeText?: (text: string) => void
+	onPlayerOptions?: (options: string[]) => void
+	onStateChanges?: (
+		changes: Array<{ valueId: string; next: unknown; reason?: string }>
+	) => void
+	signal?: AbortSignal
 }
 
 export async function runGameTurn(params: GameTurnParams) {
-	const resolvedKey = params.apiKey?.trim() || import.meta.env.VITE_OPENAI_API_KEY
+	const resolvedKey =
+		params.apiKey?.trim() || import.meta.env.VITE_OPENAI_API_KEY
 	if (!resolvedKey) {
-		throw new Error('Add an OpenAI API key inside Settings to advance the story.')
+		throw new Error(
+			'Add an OpenAI API key inside Settings to advance the story.'
+		)
 	}
-	const resolvedModel = params.model?.trim() || import.meta.env.VITE_OPENAI_MODEL || 'gpt-4.1-mini'
-	const client = new OpenAI({ apiKey: resolvedKey, dangerouslyAllowBrowser: true })
+	const resolvedModel =
+		params.model?.trim() ||
+		import.meta.env.VITE_OPENAI_MODEL ||
+		'gpt-4.1-mini'
+	const client = new OpenAI({
+		apiKey: resolvedKey,
+		dangerouslyAllowBrowser: true,
+	})
 
 	const packet = buildPromptPacket({
 		template: params.template,
@@ -28,7 +43,7 @@ export async function runGameTurn(params: GameTurnParams) {
 	})
 	const responseFormat = buildResponseFormat(params.template)
 
-	const response = (await client.responses.create(
+	const stream = client.responses.stream(
 		{
 			model: resolvedModel,
 			input: [
@@ -43,10 +58,353 @@ export async function runGameTurn(params: GameTurnParams) {
 				},
 			},
 		} as any,
-	)) as any
+		{ signal: params.signal } as any
+	)
+
+	if (
+		params.onNarrativeText ||
+		params.onPlayerOptions ||
+		params.onStateChanges
+	) {
+		let lastNarrative = ''
+		let lastOptionsKey = ''
+		let lastStateChangesKey = ''
+		stream.on('response.output_text.delta', (event: any) => {
+			const snapshotText =
+				typeof event?.snapshot === 'string' ? event.snapshot : ''
+
+			if (params.onNarrativeText) {
+				const preview = extractJsonStringFieldPreview(
+					snapshotText,
+					'narrative'
+				)
+				if (preview !== null && preview !== lastNarrative) {
+					lastNarrative = preview
+					params.onNarrativeText(preview)
+				}
+			}
+
+			if (params.onPlayerOptions) {
+				const options = extractJsonStringArrayFieldPreview(
+					snapshotText,
+					'playerOptions'
+				)
+				if (options !== null) {
+					const trimmed = options
+						.map((value) => value.trim())
+						.filter(Boolean)
+					const key = JSON.stringify(trimmed)
+					if (key !== lastOptionsKey) {
+						lastOptionsKey = key
+						params.onPlayerOptions(trimmed)
+					}
+				}
+			}
+
+			if (params.onStateChanges) {
+				const changes = extractJsonObjectArrayFieldPreview(
+					snapshotText,
+					'stateChanges'
+				)
+				if (changes !== null) {
+					const normalized = changes
+						.map((item) => {
+							if (!item || typeof item !== 'object') return null
+							const valueId = (item as any).valueId
+							const next = (item as any).next
+							const reason = (item as any).reason
+							if (typeof valueId !== 'string' || !valueId)
+								return null
+							return {
+								valueId,
+								next,
+								reason:
+									typeof reason === 'string'
+										? reason
+										: undefined,
+							}
+						})
+						.filter(Boolean) as Array<{
+						valueId: string
+						next: unknown
+						reason?: string
+					}>
+					const key = JSON.stringify(
+						normalized.map((c) => [c.valueId, c.next])
+					)
+					if (key !== lastStateChangesKey) {
+						lastStateChangesKey = key
+						params.onStateChanges(normalized)
+					}
+				}
+			}
+		})
+	}
+
+	const response = (await stream.finalResponse()) as any
 
 	const payload = extractJsonPayload(response)
 	return stepResultSchema.parse(payload)
+}
+
+function extractJsonStringFieldPreview(jsonText: string, fieldName: string) {
+	const keyNeedle = `"${fieldName}"`
+	const keyIndex = jsonText.indexOf(keyNeedle)
+	if (keyIndex === -1) {
+		return null
+	}
+	let i = keyIndex + keyNeedle.length
+	while (i < jsonText.length && /\s/.test(jsonText[i])) i++
+	if (jsonText[i] !== ':') {
+		return null
+	}
+	i++
+	while (i < jsonText.length && /\s/.test(jsonText[i])) i++
+	if (jsonText[i] !== '"') {
+		return null
+	}
+	i++
+	let out = ''
+	while (i < jsonText.length) {
+		const ch = jsonText[i]
+		if (ch === '"') {
+			return out
+		}
+		if (ch === '\\') {
+			if (i + 1 >= jsonText.length) {
+				return out
+			}
+			const esc = jsonText[i + 1]
+			switch (esc) {
+				case '"':
+					out += '"'
+					i += 2
+					continue
+				case '\\':
+					out += '\\'
+					i += 2
+					continue
+				case '/':
+					out += '/'
+					i += 2
+					continue
+				case 'b':
+					out += '\b'
+					i += 2
+					continue
+				case 'f':
+					out += '\f'
+					i += 2
+					continue
+				case 'n':
+					out += '\n'
+					i += 2
+					continue
+				case 'r':
+					out += '\r'
+					i += 2
+					continue
+				case 't':
+					out += '\t'
+					i += 2
+					continue
+				case 'u': {
+					const hex = jsonText.slice(i + 2, i + 6)
+					if (hex.length < 4 || !/^[0-9a-fA-F]{4}$/.test(hex)) {
+						return out
+					}
+					out += String.fromCharCode(parseInt(hex, 16))
+					i += 6
+					continue
+				}
+				default:
+					out += esc
+					i += 2
+					continue
+			}
+		}
+		out += ch
+		i++
+	}
+	return out
+}
+
+function extractJsonStringArrayFieldPreview(
+	jsonText: string,
+	fieldName: string
+) {
+	const keyNeedle = `"${fieldName}"`
+	const keyIndex = jsonText.indexOf(keyNeedle)
+	if (keyIndex === -1) {
+		return null
+	}
+	let i = keyIndex + keyNeedle.length
+	while (i < jsonText.length && /\s/.test(jsonText[i])) i++
+	if (jsonText[i] !== ':') {
+		return null
+	}
+	i++
+	while (i < jsonText.length && /\s/.test(jsonText[i])) i++
+	if (jsonText[i] !== '[') {
+		return null
+	}
+	i++
+	const items: string[] = []
+	while (i < jsonText.length) {
+		while (i < jsonText.length && /\s/.test(jsonText[i])) i++
+		if (i >= jsonText.length) break
+		const ch = jsonText[i]
+		if (ch === ']') {
+			return items
+		}
+		if (ch === ',') {
+			i++
+			continue
+		}
+		if (ch !== '"') {
+			return items
+		}
+		i++
+		let out = ''
+		while (i < jsonText.length) {
+			const c = jsonText[i]
+			if (c === '"') {
+				items.push(out)
+				i++
+				break
+			}
+			if (c === '\\') {
+				if (i + 1 >= jsonText.length) {
+					return items
+				}
+				const esc = jsonText[i + 1]
+				switch (esc) {
+					case '"':
+						out += '"'
+						i += 2
+						continue
+					case '\\':
+						out += '\\'
+						i += 2
+						continue
+					case '/':
+						out += '/'
+						i += 2
+						continue
+					case 'b':
+						out += '\b'
+						i += 2
+						continue
+					case 'f':
+						out += '\f'
+						i += 2
+						continue
+					case 'n':
+						out += '\n'
+						i += 2
+						continue
+					case 'r':
+						out += '\r'
+						i += 2
+						continue
+					case 't':
+						out += '\t'
+						i += 2
+						continue
+					case 'u': {
+						const hex = jsonText.slice(i + 2, i + 6)
+						if (hex.length < 4 || !/^[0-9a-fA-F]{4}$/.test(hex)) {
+							return items
+						}
+						out += String.fromCharCode(parseInt(hex, 16))
+						i += 6
+						continue
+					}
+					default:
+						out += esc
+						i += 2
+						continue
+				}
+			}
+			out += c
+			i++
+		}
+	}
+	return items
+}
+
+function extractJsonObjectArrayFieldPreview(
+	jsonText: string,
+	fieldName: string
+) {
+	const keyNeedle = `"${fieldName}"`
+	const keyIndex = jsonText.indexOf(keyNeedle)
+	if (keyIndex === -1) {
+		return null
+	}
+	let i = keyIndex + keyNeedle.length
+	while (i < jsonText.length && /\s/.test(jsonText[i])) i++
+	if (jsonText[i] !== ':') {
+		return null
+	}
+	i++
+	while (i < jsonText.length && /\s/.test(jsonText[i])) i++
+	if (jsonText[i] !== '[') {
+		return null
+	}
+	i++
+	const objects: any[] = []
+	let inString = false
+	let escape = false
+	let depth = 0
+	let currentStart = -1
+	for (; i < jsonText.length; i++) {
+		const ch = jsonText[i]
+		if (inString) {
+			if (escape) {
+				escape = false
+				continue
+			}
+			if (ch === '\\') {
+				escape = true
+				continue
+			}
+			if (ch === '"') {
+				inString = false
+			}
+			continue
+		}
+		if (ch === '"') {
+			inString = true
+			continue
+		}
+		if (ch === '{') {
+			if (depth === 0) {
+				currentStart = i
+			}
+			depth++
+			continue
+		}
+		if (ch === '}') {
+			if (depth > 0) {
+				depth--
+				if (depth === 0 && currentStart !== -1) {
+					const candidate = jsonText.slice(currentStart, i + 1)
+					try {
+						objects.push(JSON.parse(candidate))
+					} catch {
+						return objects
+					}
+					currentStart = -1
+				}
+			}
+			continue
+		}
+		if (ch === ']') {
+			return objects
+		}
+	}
+	return objects
 }
 
 const templateSuggestionSchema = z.object({

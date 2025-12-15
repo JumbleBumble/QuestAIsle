@@ -1,4 +1,11 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react'
+import {
+	FormEvent,
+	useCallback,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+} from 'react'
 import { motion, useReducedMotion } from 'framer-motion'
 import {
 	SendHorizontal,
@@ -27,6 +34,25 @@ import { buildEffectiveTemplate } from '../utils/effectiveTemplate'
 import { buildInitialValues, coerceValueForType } from '../utils/prompting'
 import { useSaveWriter, useSavesQuery } from '../hooks/useSaveQueries'
 import { useTemplateSaver } from '../hooks/useTemplateQueries'
+
+function StreamTypewriterText({ chunks }: { chunks: string[] }) {
+	return (
+		<div className="whitespace-pre-wrap wrap-break-word">
+			{chunks.map((chunk, chunkIndex) => (
+				<span key={chunkIndex}>
+					{Array.from(chunk).map((char, charIndex) => (
+						<span
+							key={`${chunkIndex}-${charIndex}`}
+							className="qa-typewriter-char"
+						>
+							{char}
+						</span>
+					))}
+				</span>
+			))}
+		</div>
+	)
+}
 
 export function SessionPanel({
 	template,
@@ -62,6 +88,57 @@ export function SessionPanel({
 	const [historyEditNarrative, setHistoryEditNarrative] = useState('')
 	const [pendingRewindId, setPendingRewindId] = useState<string | null>(null)
 	const [historyOpError, setHistoryOpError] = useState<string | null>(null)
+	const [streamedNarrativeChunks, setStreamedNarrativeChunks] = useState<
+		string[]
+	>([])
+	const [streamedPlayerOptions, setStreamedPlayerOptions] = useState<
+		string[]
+	>([])
+	const [streamedStateChanges, setStreamedStateChanges] = useState<
+		Array<{ valueId: string; next: unknown }>
+	>([])
+	const streamedNarrativeTextRef = useRef('')
+	const streamedNarrativePendingRef = useRef('')
+	const streamedNarrativeRafRef = useRef<number | null>(null)
+
+	const handleStreamNarrative = useCallback((nextText: string) => {
+		const previousText = streamedNarrativeTextRef.current
+		if (!nextText || nextText.length < previousText.length) {
+			streamedNarrativeTextRef.current = nextText
+			streamedNarrativePendingRef.current = ''
+			setStreamedNarrativeChunks(nextText ? [nextText] : [])
+			return
+		}
+		const delta = nextText.slice(previousText.length)
+		if (!delta) {
+			return
+		}
+		streamedNarrativeTextRef.current = nextText
+		streamedNarrativePendingRef.current += delta
+		if (streamedNarrativeRafRef.current !== null) {
+			return
+		}
+		streamedNarrativeRafRef.current = window.requestAnimationFrame(() => {
+			streamedNarrativeRafRef.current = null
+			const pending = streamedNarrativePendingRef.current
+			if (!pending) {
+				return
+			}
+			streamedNarrativePendingRef.current = ''
+			setStreamedNarrativeChunks((current) => [...current, pending])
+		})
+	}, [])
+
+	const handleStreamPlayerOptions = useCallback((options: string[]) => {
+		setStreamedPlayerOptions(options)
+	}, [])
+
+	const handleStreamStateChanges = useCallback(
+		(changes: Array<{ valueId: string; next: unknown }>) => {
+			setStreamedStateChanges(changes)
+		},
+		[]
+	)
 
 	const resolvedSave = useMemo(() => {
 		if (localSaveOverride && localSaveOverride.id === save?.id) {
@@ -98,12 +175,31 @@ export function SessionPanel({
 			apiKey: settings?.openaiApiKey,
 			model: settings?.openaiModel,
 			memoryTurnCount: settings?.memoryTurnCount,
+		},
+		{
+			onNarrativeText: handleStreamNarrative,
+			onPlayerOptions: handleStreamPlayerOptions,
+			onStateChanges: handleStreamStateChanges,
 		}
 	)
 
 	useEffect(() => {
 		setAdvancing(effectiveTurn.isPending)
 	}, [effectiveTurn.isPending, setAdvancing])
+
+	useEffect(() => {
+		if (!effectiveTurn.isPending) {
+			streamedNarrativeTextRef.current = ''
+			streamedNarrativePendingRef.current = ''
+			if (streamedNarrativeRafRef.current !== null) {
+				window.cancelAnimationFrame(streamedNarrativeRafRef.current)
+				streamedNarrativeRafRef.current = null
+			}
+			setStreamedNarrativeChunks([])
+			setStreamedPlayerOptions([])
+			setStreamedStateChanges([])
+		}
+	}, [effectiveTurn.isPending])
 
 	useEffect(() => {
 		if (effectiveTurn.isSuccess) {
@@ -225,8 +321,21 @@ export function SessionPanel({
 			return
 		}
 		const nextAction = playerAction.trim()
+		streamedNarrativeTextRef.current = ''
+		streamedNarrativePendingRef.current = ''
+		if (streamedNarrativeRafRef.current !== null) {
+			window.cancelAnimationFrame(streamedNarrativeRafRef.current)
+			streamedNarrativeRafRef.current = null
+		}
+		setStreamedNarrativeChunks([])
+		setStreamedPlayerOptions([])
+		setStreamedStateChanges([])
 		effectiveTurn.mutate(nextAction || 'Continue the scene')
 	}
+
+	const suggestionsToShow = effectiveTurn.isPending
+		? streamedPlayerOptions
+		: latestSuggestions
 
 	const canStartFirstRun =
 		Boolean(template) &&
@@ -1014,18 +1123,37 @@ export function SessionPanel({
 						rows={3}
 						className="mt-3 w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-base focus:border-purple-400 focus:outline-none"
 					/>
-					{latestSuggestions.length > 0 && (
+					{suggestionsToShow.length > 0 && (
 						<div className="mt-3 space-y-2">
 							<p className="text-xs font-semibold uppercase tracking-[0.3em] text-purple-100/80">
 								AI Suggests
 							</p>
 							<div className="flex flex-wrap gap-2">
-								{latestSuggestions.map((suggestion) => (
+								{suggestionsToShow.map((suggestion, index) => (
 									<motion.button
 										key={suggestion}
 										type="button"
 										onClick={() =>
 											handleSuggestion(suggestion)
+										}
+										initial={
+											reduceMotion
+												? undefined
+												: { opacity: 0, y: 4 }
+										}
+										animate={
+											reduceMotion
+												? undefined
+												: { opacity: 1, y: 0 }
+										}
+										transition={
+											reduceMotion
+												? undefined
+												: {
+														duration: 0.22,
+														ease: 'easeOut',
+														delay: index * 0.06,
+												  }
 										}
 										whileHover={
 											reduceMotion
@@ -1055,7 +1183,9 @@ export function SessionPanel({
 								<motion.button
 									type="button"
 									onClick={handleStartFirstRun}
-									disabled={!template || saveWriter.isPending}
+									disabled={
+										!template || saveWriter.isPending
+									}
 									whileHover={
 										reduceMotion ||
 										!template ||
@@ -1090,8 +1220,8 @@ export function SessionPanel({
 									!resolvedSave ||
 									effectiveTurn.isPending ||
 									!hasApiKey
-									? undefined
-									: { scale: 1.01 }
+										? undefined
+										: { scale: 1.01 }
 								}
 								whileTap={
 									reduceMotion ||
@@ -1099,8 +1229,8 @@ export function SessionPanel({
 									!resolvedSave ||
 									effectiveTurn.isPending ||
 									!hasApiKey
-									? undefined
-									: { scale: 0.99 }
+										? undefined
+										: { scale: 0.99 }
 								}
 								className="inline-flex items-center gap-2 rounded-2xl bg-linear-to-r from-indigo-500 to-fuchsia-500 px-5 py-3 text-sm font-semibold shadow-lg shadow-indigo-500/30 disabled:cursor-not-allowed disabled:opacity-40"
 							>
@@ -1207,6 +1337,77 @@ export function SessionPanel({
 						<p className="text-sm text-purple-200/70">
 							No turns yet. Submit an action to begin.
 						</p>
+					)}
+					{effectiveTurn.isPending && (
+						<motion.article
+							key="streaming-turn"
+							className="rounded-3xl border border-white/10 bg-black/50 p-4"
+							initial={{ opacity: 0, y: 10 }}
+							animate={{ opacity: 1, y: 0 }}
+						>
+							<div className="flex flex-wrap items-start justify-between gap-3">
+								<div>
+									<p className="text-xs uppercase tracking-[0.3em] text-purple-400">
+										Player
+									</p>
+									<p className="mt-1 text-sm text-white">
+										{playerAction.trim() ||
+											'Continue the scene'}
+									</p>
+								</div>
+							</div>
+							<p className="mt-3 text-xs uppercase tracking-[0.3em] text-fuchsia-300">
+								AI Narrator
+							</p>
+							<div className="mt-1 text-base leading-relaxed text-white">
+								{streamedNarrativeChunks.length ? (
+									<StreamTypewriterText
+										chunks={streamedNarrativeChunks}
+									/>
+								) : (
+									<p className="text-sm text-purple-200/70">
+										Waiting for response...
+									</p>
+								)}
+							</div>
+							{streamedStateChanges.length > 0 && (
+								<ul className="mt-3 text-xs text-emerald-200">
+									{streamedStateChanges.map(
+										(change, index) => (
+											<motion.li
+												key={change.valueId}
+												initial={
+													reduceMotion
+														? undefined
+														: { opacity: 0, y: 4 }
+												}
+												animate={
+													reduceMotion
+														? undefined
+														: { opacity: 1, y: 0 }
+												}
+												transition={
+													reduceMotion
+														? undefined
+														: {
+																duration: 0.22,
+																ease: 'easeOut',
+																delay:
+																	index *
+																	0.06,
+														  }
+												}
+											>
+												<strong>
+													{change.valueId}
+												</strong>
+												: {JSON.stringify(change.next)}
+											</motion.li>
+										)
+									)}
+								</ul>
+							)}
+						</motion.article>
 					)}
 					{history.map((entry) => (
 						<motion.article
@@ -1410,13 +1611,36 @@ export function SessionPanel({
 							{(entry.stateChanges?.length ?? 0) > 0 && (
 								<ul className="mt-3 text-xs text-emerald-200">
 									{(entry.stateChanges ?? []).map(
-										(change) => (
-											<li key={change.valueId}>
+										(change, index) => (
+											<motion.li
+												key={change.valueId}
+												initial={
+													reduceMotion
+														? undefined
+														: { opacity: 0, y: 4 }
+												}
+												animate={
+													reduceMotion
+														? undefined
+														: { opacity: 1, y: 0 }
+												}
+												transition={
+													reduceMotion
+														? undefined
+														: {
+																duration: 0.22,
+																ease: 'easeOut',
+																delay:
+																	index *
+																	0.06,
+														  }
+												}
+											>
 												<strong>
 													{change.valueId}
 												</strong>
 												: {JSON.stringify(change.next)}
-											</li>
+											</motion.li>
 										)
 									)}
 								</ul>

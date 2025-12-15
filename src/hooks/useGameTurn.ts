@@ -14,10 +14,19 @@ export type RunSettings = {
 	memoryTurnCount?: number | null
 }
 
+export type RunStreaming = {
+	onNarrativeText?: (text: string) => void
+	onPlayerOptions?: (options: string[]) => void
+	onStateChanges?: (
+		changes: Array<{ valueId: string; next: unknown; reason?: string }>
+	) => void
+}
+
 export function useGameTurn(
 	template?: GameTemplate,
 	save?: GameSave,
-	settings?: RunSettings
+	settings?: RunSettings,
+	streaming?: RunStreaming
 ) {
 	const client = useQueryClient()
 	return useMutation({
@@ -27,6 +36,7 @@ export function useGameTurn(
 					'Select a template and save before advancing the story.'
 				)
 			}
+			const abortController = new AbortController()
 			const result = await runGameTurn({
 				template,
 				save,
@@ -34,6 +44,10 @@ export function useGameTurn(
 				apiKey: settings?.apiKey,
 				model: settings?.model,
 				memoryTurnCount: settings?.memoryTurnCount ?? undefined,
+				onNarrativeText: streaming?.onNarrativeText,
+				onPlayerOptions: streaming?.onPlayerOptions,
+				onStateChanges: streaming?.onStateChanges,
+				signal: abortController.signal,
 			})
 			const updatedValues = applyChangesToValues(
 				template,
