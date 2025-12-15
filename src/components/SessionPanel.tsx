@@ -8,6 +8,8 @@ import {
 	PlusCircle,
 	Save,
 	Copy,
+	ChevronLeft,
+	ChevronRight,
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -52,6 +54,7 @@ export function SessionPanel({
 	const [templateExportMessage, setTemplateExportMessage] = useState<
 		string | null
 	>(null)
+	const [historyPage, setHistoryPage] = useState(0)
 	const [historyEditId, setHistoryEditId] = useState<string | null>(null)
 	const [historyEditPlayerAction, setHistoryEditPlayerAction] = useState('')
 	const [historyEditNarrative, setHistoryEditNarrative] = useState('')
@@ -126,6 +129,7 @@ export function SessionPanel({
 			setValueDrafts({})
 			setRunValueError(null)
 			setTemplateExportMessage(null)
+			setHistoryPage(0)
 			setHistoryEditId(null)
 			setPendingRewindId(null)
 			setHistoryOpError(null)
@@ -140,6 +144,7 @@ export function SessionPanel({
 		setValueDrafts(drafts)
 		setRunValueError(null)
 		setTemplateExportMessage(null)
+		setHistoryPage(0)
 		setHistoryEditId(null)
 		setPendingRewindId(null)
 		setHistoryOpError(null)
@@ -170,7 +175,30 @@ export function SessionPanel({
 		return String(value)
 	}
 
-	const history = resolvedSave?.history.slice(-5).reverse() ?? []
+	const historyPageSize = 5
+	const fullHistory = useMemo(() => {
+		if (!resolvedSave?.history?.length) {
+			return []
+		}
+		return [...resolvedSave.history].reverse()
+	}, [resolvedSave?.history])
+
+	const historyPageCount = Math.max(
+		1,
+		Math.ceil(fullHistory.length / historyPageSize)
+	)
+	const clampedHistoryPage = Math.min(historyPage, historyPageCount - 1)
+
+	useEffect(() => {
+		if (clampedHistoryPage !== historyPage) {
+			setHistoryPage(clampedHistoryPage)
+		}
+	}, [clampedHistoryPage, historyPage])
+
+	const history = useMemo(() => {
+		const start = clampedHistoryPage * historyPageSize
+		return fullHistory.slice(start, start + historyPageSize)
+	}, [clampedHistoryPage, fullHistory])
 
 	const latestSuggestions = useMemo(() => {
 		if (!resolvedSave?.history.length) {
@@ -1001,15 +1029,72 @@ export function SessionPanel({
 				</form>
 
 				<div className="space-y-3">
-					<div className="flex items-center gap-3 text-sm text-purple-100">
-						<Sparkles className="h-4 w-4" /> Story Log
+					<div className="flex flex-wrap items-center justify-between gap-3 text-sm text-purple-100">
+						<div className="flex items-center gap-3">
+							<Sparkles className="h-4 w-4" /> Story Log
+						</div>
+						{fullHistory.length > 0 && (
+							<div className="flex flex-wrap items-center gap-2 text-xs text-purple-100/80">
+								<motion.button
+									type="button"
+									onClick={() =>
+										setHistoryPage((current) =>
+											Math.max(0, current - 1)
+										)
+									}
+									disabled={clampedHistoryPage === 0}
+									aria-label="Newer page"
+									whileHover={
+										reduceMotion || clampedHistoryPage === 0
+											? undefined
+											: { scale: 1.02 }
+									}
+									whileTap={
+										reduceMotion || clampedHistoryPage === 0
+											? undefined
+											: { scale: 0.99 }
+									}
+									className="rounded-2xl border border-white/10 bg-black/30 px-3 py-1 text-xs text-purple-50 hover:border-purple-400 disabled:cursor-not-allowed disabled:opacity-40"
+								>
+									<ChevronLeft className="h-4 w-4" />
+								</motion.button>
+								<span className="rounded-2xl border border-white/10 bg-white/5 px-3 py-1">
+									Page {clampedHistoryPage + 1} of {historyPageCount}
+								</span>
+								<motion.button
+									type="button"
+									onClick={() =>
+										setHistoryPage((current) =>
+											Math.min(historyPageCount - 1, current + 1)
+										)
+									}
+									disabled={clampedHistoryPage >= historyPageCount - 1}
+									aria-label="Older page"
+									whileHover={
+										reduceMotion ||
+										clampedHistoryPage >= historyPageCount - 1
+											? undefined
+											: { scale: 1.02 }
+									}
+									whileTap={
+										reduceMotion ||
+										clampedHistoryPage >= historyPageCount - 1
+											? undefined
+											: { scale: 0.99 }
+									}
+									className="rounded-2xl border border-white/10 bg-black/30 px-3 py-1 text-xs text-purple-50 hover:border-purple-400 disabled:cursor-not-allowed disabled:opacity-40"
+								>
+									<ChevronRight className="h-4 w-4" />
+								</motion.button>
+							</div>
+						)}
 					</div>
 					{historyOpError && (
 						<p className="text-sm text-rose-200">
 							{historyOpError}
 						</p>
 					)}
-					{!history.length && (
+					{!fullHistory.length && (
 						<p className="text-sm text-purple-200/70">
 							No turns yet. Submit an action to begin.
 						</p>
