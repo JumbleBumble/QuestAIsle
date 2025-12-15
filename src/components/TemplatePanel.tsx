@@ -14,6 +14,7 @@ import {
 import {
 	GameTemplate,
 	GameValueDefinition,
+	valuePayloadSchema,
 	valueTypeSchema,
 } from '../types/game'
 import { TemplateDraft } from '../data/templates'
@@ -23,6 +24,17 @@ import {
 	generateTemplateFromPrompt,
 	TemplateSuggestion,
 } from '../utils/openai'
+import { ToggleSwitch } from './ui/ToggleSwitch'
+
+const optionalFiniteNumber = z
+	.union([z.number().finite(), z.nan()])
+	.transform((value) => (Number.isNaN(value) ? undefined : value))
+	.optional()
+
+const optionalPositiveInt = z
+	.union([z.number().int().positive(), z.nan()])
+	.transform((value) => (Number.isNaN(value) ? undefined : value))
+	.optional()
 
 const valueDefinitionFormSchema = z.object({
 	id: z.string().min(1, 'Provide a value id'),
@@ -30,9 +42,9 @@ const valueDefinitionFormSchema = z.object({
 	type: valueTypeSchema,
 	description: z.string().optional(),
 	defaultValue: z.string().optional(),
-	min: z.number().finite().optional(),
-	max: z.number().finite().optional(),
-	maxLength: z.number().int().positive().optional(),
+	min: optionalFiniteNumber,
+	max: optionalFiniteNumber,
+	maxLength: optionalPositiveInt,
 })
 
 type ValueDefinitionForm = z.infer<typeof valueDefinitionFormSchema>
@@ -118,16 +130,41 @@ function parseDefaultValue(
 	try {
 		switch (def.type) {
 			case 'integer':
-				return Number.parseInt(raw, 10)
+				if (!raw.length) {
+					return undefined
+				}
+				{
+					const candidate = Number(raw)
+					if (!Number.isFinite(candidate)) {
+						return undefined
+					}
+					return Math.trunc(candidate)
+				}
 			case 'float':
 			case 'number':
-				return Number.parseFloat(raw)
-			case 'boolean':
-				return raw === 'true'
+				if (!raw.length) {
+					return undefined
+				}
+				{
+					const candidate = Number(raw)
+					return Number.isFinite(candidate) ? candidate : undefined
+				}
+			case 'boolean': {
+				const normalized = raw.toLowerCase()
+				if (['true', '1', 'yes', 'on'].includes(normalized)) {
+					return true
+				}
+				if (['false', '0', 'no', 'off'].includes(normalized)) {
+					return false
+				}
+				return undefined
+			}
 			case 'array':
-				return JSON.parse(raw)
-			case 'object':
-				return JSON.parse(raw)
+			case 'object': {
+				const parsed = JSON.parse(raw)
+				const validated = valuePayloadSchema.safeParse(parsed)
+				return validated.success ? validated.data : undefined
+			}
 			default:
 				return raw
 		}
@@ -137,7 +174,7 @@ function parseDefaultValue(
 			def,
 			error
 		)
-		return raw
+		return undefined
 	}
 }
 
@@ -284,18 +321,32 @@ export function TemplatePanel() {
 					?.split('\n\n')
 					.map((block) => block.trim())
 					.filter(Boolean) ?? [],
-			values: (values.values ?? []).map((value) => ({
-				id: value.id,
-				label: value.label,
-				type: value.type,
-				description: value.description,
-				defaultValue: parseDefaultValue(value),
-				min: Number.isFinite(value.min) ? value.min : undefined,
-				max: Number.isFinite(value.max) ? value.max : undefined,
-				maxLength: Number.isFinite(value.maxLength)
-					? value.maxLength
-					: undefined,
-			})),
+			values: (values.values ?? []).map((value) => {
+				const isNumeric =
+					value.type === 'integer' ||
+					value.type === 'float' ||
+					value.type === 'number'
+				const isArray = value.type === 'array'
+				return {
+					id: value.id,
+					label: value.label,
+					type: value.type,
+					description: value.description,
+					defaultValue: parseDefaultValue(value),
+					min:
+						isNumeric && Number.isFinite(value.min)
+							? value.min
+							: undefined,
+					max:
+						isNumeric && Number.isFinite(value.max)
+							? value.max
+							: undefined,
+					maxLength:
+						isArray && Number.isFinite(value.maxLength)
+							? value.maxLength
+							: undefined,
+				}
+			}),
 		}
 	}
 
@@ -328,21 +379,37 @@ export function TemplatePanel() {
 			safety: values.safety,
 			instructionBlocks: values.instructions
 				?.split('\n\n')
-				.map((block) => block.trim())
+				.map((block: string) => block.trim())
 				.filter(Boolean),
-			valueDefinitions: values.values.map((value) => ({
-				id: value.id,
-				label: value.label,
-				type: value.type,
-				description: value.description,
-				visibility: 'public',
-				defaultValue: parseDefaultValue(value),
-				min: Number.isFinite(value.min) ? value.min : undefined,
-				max: Number.isFinite(value.max) ? value.max : undefined,
-				maxLength: Number.isFinite(value.maxLength)
-					? value.maxLength
-					: undefined,
-			})),
+			valueDefinitions: values.values.map(
+				(value: ValueDefinitionForm) => {
+					const isNumeric =
+						value.type === 'integer' ||
+						value.type === 'float' ||
+						value.type === 'number'
+					const isArray = value.type === 'array'
+					return {
+						id: value.id,
+						label: value.label,
+						type: value.type,
+						description: value.description,
+						visibility: 'public',
+						defaultValue: parseDefaultValue(value),
+						min:
+							isNumeric && Number.isFinite(value.min)
+								? value.min
+								: undefined,
+						max:
+							isNumeric && Number.isFinite(value.max)
+								? value.max
+								: undefined,
+						maxLength:
+							isArray && Number.isFinite(value.maxLength)
+								? value.maxLength
+								: undefined,
+					}
+				}
+			),
 		}
 
 		const created = await saver.mutateAsync({ draft })
@@ -470,13 +537,18 @@ export function TemplatePanel() {
 											type="button"
 											onClick={(event) => {
 												event.stopPropagation()
-												remover.mutate(template.slug)
-												if (
+												const wasActive =
 													activeTemplateSlug ===
 													template.slug
-												) {
-													setActiveTemplate(null)
-												}
+												remover.mutate(template.slug, {
+													onSuccess: () => {
+														if (wasActive) {
+															setActiveTemplate(
+																null
+															)
+														}
+													},
+												})
 											}}
 											whileHover={
 												reduceMotion
@@ -499,7 +571,7 @@ export function TemplatePanel() {
 										? truncateText(
 												template.premise,
 												PREMISE_PREVIEW_MAX_LEN
-											)
+										  )
 										: 'Player-driven narrative'}
 								</p>
 								<div className="mt-3 flex flex-wrap gap-2 text-xs text-purple-100/70">
@@ -814,13 +886,66 @@ export function TemplatePanel() {
 											placeholder="Narrative guidance"
 											className="mt-3 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white focus:border-purple-400 focus:outline-none"
 										/>
-										<input
-											{...form.register(
+										{(() => {
+											const currentType = form.watch(
+												`values.${index}.type`
+											)
+											if (currentType !== 'boolean') {
+												return (
+													<input
+														{...form.register(
+															`values.${index}.defaultValue`
+														)}
+														placeholder="Default (numbers, JSON arrays/objects, etc.)"
+														className="mt-3 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white focus:border-purple-400 focus:outline-none"
+													/>
+												)
+											}
+
+											const raw = form.watch(
 												`values.${index}.defaultValue`
-											)}
-											placeholder="Default (numbers, JSON arrays/objects, etc.)"
-											className="mt-3 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white focus:border-purple-400 focus:outline-none"
-										/>
+											)
+											const checked =
+												(raw ?? '')
+													.toString()
+													.trim()
+													.toLowerCase() === 'true'
+
+											return (
+												<div className="mt-3 flex items-center justify-between rounded-xl border border-white/10 bg-black/30 px-3 py-2">
+													<p className="text-xs text-purple-100/80">
+														Default
+														<span className="ml-2 text-purple-200/70">
+															{checked
+																? 'true'
+																: 'false'}
+														</span>
+													</p>
+													<ToggleSwitch
+														label="Toggle boolean default"
+														checked={checked}
+														onCheckedChange={(
+															next
+														) => {
+															form.setValue(
+																`values.${index}.defaultValue`,
+																next
+																	? 'true'
+																	: 'false',
+																{
+																	shouldDirty:
+																		true,
+																	shouldTouch:
+																		true,
+																	shouldValidate:
+																		true,
+																}
+															)
+														}}
+													/>
+												</div>
+											)
+										})()}
 										{(() => {
 											const currentType = form.watch(
 												`values.${index}.type`

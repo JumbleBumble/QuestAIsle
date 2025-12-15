@@ -266,6 +266,37 @@ Ensure each tracked value has a concise snake_case id, a descriptive label, and 
 }
 
 
+function stripCodeFences(raw: string) {
+	let text = raw.trim()
+	if (text.startsWith('```')) {
+		text = text.replace(/^```[a-zA-Z0-9_-]*\s*/, '')
+		text = text.replace(/\s*```\s*$/, '')
+	}
+	return text.trim()
+}
+
+function tryParseJsonObjectFromText(text: string) {
+	const cleaned = stripCodeFences(text)
+	const candidates: string[] = [cleaned]
+
+	const firstBrace = cleaned.indexOf('{')
+	const lastBrace = cleaned.lastIndexOf('}')
+	if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+		candidates.push(cleaned.slice(firstBrace, lastBrace + 1))
+	}
+
+	for (const candidate of candidates) {
+		try {
+			const parsed = JSON.parse(candidate)
+			if (isPlainObject(parsed)) {
+				return parsed
+			}
+		} catch {}
+	}
+
+	return null
+}
+
 function extractJsonPayload(response: any) {
 	const attempts: string[] = []
 	if ('output_text' in response && response.output_text) {
@@ -283,7 +314,8 @@ function extractJsonPayload(response: any) {
 	for (const block of response.output ?? []) {
 		if ('content' in block && Array.isArray(block.content)) {
 			for (const segment of block.content) {
-				const candidateText = (segment as any).text ?? (segment as any).output_text
+				const candidateText =
+					(segment as any).text ?? (segment as any).output_text
 				if (typeof candidateText === 'string') {
 					attempts.push(candidateText)
 				}
@@ -293,14 +325,19 @@ function extractJsonPayload(response: any) {
 						return schemaSegment.output
 					}
 					if (schemaSegment?.arguments) {
-						try {
-							const parsed = JSON.parse(schemaSegment.arguments)
-							if (isPlainObject(parsed)) {
-								return parsed
-							}
-						} catch (error) {
-							console.warn('Failed to parse schema arguments', schemaSegment.arguments)
+						const parsed =
+							typeof schemaSegment.arguments === 'string'
+								? tryParseJsonObjectFromText(
+										schemaSegment.arguments
+								  )
+								: null
+						if (parsed) {
+							return parsed
 						}
+						console.warn(
+							'Failed to parse schema arguments',
+							schemaSegment.arguments
+						)
 					}
 				}
 			}
@@ -308,17 +345,15 @@ function extractJsonPayload(response: any) {
 	}
 
 	for (const attempt of attempts) {
-		try {
-			const parsed = JSON.parse(attempt)
-			if (isPlainObject(parsed)) {
-				return parsed
-			}
-		} catch (error) {
-			continue
+		const parsed = tryParseJsonObjectFromText(attempt)
+		if (parsed) {
+			return parsed
 		}
 	}
 
-	throw new Error('Assistant response did not include valid JSON output. Make sure the template instructions remind the AI to only return JSON.')
+	throw new Error(
+		'Assistant response did not include valid JSON output. Make sure the template instructions remind the AI to only return JSON.'
+	)
 }
 
 function isPlainObject(candidate: unknown): candidate is Record<string, unknown> {

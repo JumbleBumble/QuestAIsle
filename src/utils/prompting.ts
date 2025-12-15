@@ -10,24 +10,109 @@ import {
 	valuePayloadSchema,
 } from '../types/game'
 
-const fallbackMap: Record<string, GameValuePayload> = {
-	boolean: false,
-	integer: 0,
-	float: 0,
-	number: 0,
-	string: '',
-	text: '',
-	array: [],
-	object: {},
+function safeStringify(value: unknown) {
+	try {
+		return JSON.stringify(value)
+	} catch {
+		return '[unserializable]'
+	}
 }
 
-function formatValue(def: GameValueDefinition, value: GameValuePayload | undefined) {
-	const resolved = value ?? def.defaultValue ?? fallbackMap[def.type] ?? ''
-	return typeof resolved === 'string' ? resolved : JSON.stringify(resolved)
+function getFallbackValue(
+	type: GameValueDefinition['type']
+): GameValuePayload {
+	if (type === 'array') {
+		return []
+	}
+	if (type === 'object') {
+		return {}
+	}
+	if (type === 'boolean') {
+		return false
+	}
+	if (type === 'integer' || type === 'float' || type === 'number') {
+		return 0
+	}
+	return ''
+}
+
+function cloneValuePayload(value: GameValuePayload): GameValuePayload {
+	if (Array.isArray(value)) {
+		return [...value]
+	}
+	if (value && typeof value === 'object') {
+		const obj = value as Record<string, ScalarValue | ScalarValue[]>
+		const next: Record<string, ScalarValue | ScalarValue[]> = {}
+		for (const [key, entry] of Object.entries(obj)) {
+			next[key] = Array.isArray(entry) ? [...entry] : entry
+		}
+		return next
+	}
+	return value
+}
+
+function toScalar(value: unknown): ScalarValue {
+	if (
+		typeof value === 'string' ||
+		typeof value === 'number' ||
+		typeof value === 'boolean'
+	) {
+		return value
+	}
+	if (value === null || value === undefined) {
+		return ''
+	}
+	return safeStringify(value)
+}
+
+function sanitizeArray(value: unknown): ScalarValue[] {
+	if (!Array.isArray(value)) {
+		return [toScalar(value)]
+	}
+	return value.map((entry) => toScalar(entry))
+}
+
+function sanitizeObject(
+	value: unknown
+): Record<string, ScalarValue | ScalarValue[]> {
+	if (!value || typeof value !== 'object' || Array.isArray(value)) {
+		return {
+			value: Array.isArray(value)
+				? sanitizeArray(value)
+				: toScalar(value),
+		}
+	}
+	const next: Record<string, ScalarValue | ScalarValue[]> = {}
+	for (const [key, entry] of Object.entries(
+		value as Record<string, unknown>
+	)) {
+		if (Array.isArray(entry)) {
+			next[key] = entry.map((item) => toScalar(item))
+			continue
+		}
+		if (entry && typeof entry === 'object') {
+			next[key] = safeStringify(entry)
+			continue
+		}
+		next[key] = toScalar(entry)
+	}
+	return next
+}
+
+function formatValue(
+	def: GameValueDefinition,
+	value: GameValuePayload | undefined
+) {
+	const resolved = value ?? def.defaultValue ?? getFallbackValue(def.type)
+	return typeof resolved === 'string' ? resolved : safeStringify(resolved)
 }
 
 function formatConstraints(def: GameValueDefinition) {
-	if (def.type === 'integer' || def.type === 'float' || def.type === 'number') {
+	if (
+		def.type === 'integer' ||
+		def.type === 'float' ||
+		def.type === 'number'
+	) {
 		const min = def.min
 		const max = def.max
 		if (min === undefined && max === undefined) {
@@ -52,7 +137,12 @@ function formatConstraints(def: GameValueDefinition) {
 function snapshotValues(template: GameTemplate, save: GameSave) {
 	const snapshot: Record<string, GameValuePayload> = {}
 	for (const def of template.valueDefinitions) {
-		snapshot[def.id] = coerceValueForType(def, save.values[def.id] ?? def.defaultValue ?? fallbackMap[def.type])
+		snapshot[def.id] = coerceValueForType(
+			def,
+			save.values[def.id] ??
+				def.defaultValue ??
+				getFallbackValue(def.type)
+		)
 	}
 	return snapshot
 }
@@ -60,7 +150,10 @@ function snapshotValues(template: GameTemplate, save: GameSave) {
 export function buildInitialValues(template: GameTemplate) {
 	const values: Record<string, GameValuePayload> = {}
 	for (const def of template.valueDefinitions) {
-		values[def.id] = coerceValueForType(def, def.defaultValue ?? fallbackMap[def.type])
+		values[def.id] = coerceValueForType(
+			def,
+			def.defaultValue ?? getFallbackValue(def.type)
+		)
 	}
 	return values
 }
@@ -312,14 +405,22 @@ export function buildResponseFormat(template: GameTemplate) {
 	}
 }
 
-export function coerceValueForType(def: GameValueDefinition, value: GameValuePayload | undefined) {
+export function coerceValueForType(
+	def: GameValueDefinition,
+	value: GameValuePayload | undefined
+) {
 	if (value === undefined || value === null) {
-		return def.defaultValue ?? fallbackMap[def.type]
+		const resolved = (def.defaultValue ??
+			getFallbackValue(def.type)) as GameValuePayload
+		return cloneValuePayload(resolved)
 	}
 
 	const clampNumber = (candidate: number) => {
 		if (!Number.isFinite(candidate)) {
-			return def.defaultValue ?? fallbackMap[def.type]
+			return cloneValuePayload(
+				(def.defaultValue ??
+					getFallbackValue(def.type)) as GameValuePayload
+			)
 		}
 		let next = candidate
 		if (def.min !== undefined) {
@@ -342,26 +443,32 @@ export function coerceValueForType(def: GameValueDefinition, value: GameValuePay
 	}
 
 	if (def.type === 'boolean') {
+		if (typeof value === 'string') {
+			const normalized = value.trim().toLowerCase()
+			if (['false', '0', 'no', 'off', ''].includes(normalized)) {
+				return false
+			}
+			if (['true', '1', 'yes', 'on'].includes(normalized)) {
+				return true
+			}
+		}
 		return Boolean(value)
 	}
 
 	if (def.type === 'array') {
-		let next: ScalarValue[]
-		if (Array.isArray(value)) {
-			next = value as ScalarValue[]
-		} else if (typeof value === 'object') {
-			next = [JSON.stringify(value)]
-		} else {
-			next = [value as ScalarValue]
-		}
-		if (def.maxLength !== undefined && Number.isFinite(def.maxLength) && def.maxLength > 0) {
+		let next = sanitizeArray(value)
+		if (
+			def.maxLength !== undefined &&
+			Number.isFinite(def.maxLength) &&
+			def.maxLength > 0
+		) {
 			next = next.slice(0, def.maxLength)
 		}
 		return next as GameValuePayload
 	}
 
-	if (def.type === 'object' && (typeof value !== 'object' || value === null)) {
-		return { value }
+	if (def.type === 'object') {
+		return sanitizeObject(value)
 	}
 
 	return value
