@@ -1,7 +1,14 @@
 import OpenAI from 'openai'
 import { z } from 'zod'
 import { GameSave, GameTemplate, valuePayloadSchema, valueTypeSchema } from '../types/game'
-import { buildPromptPacket, buildResponseFormat, stepResultSchema } from './prompting'
+import {
+	buildMemoryOverviewPromptPacket,
+	buildMemoryOverviewResponseFormat,
+	buildPromptPacket,
+	buildResponseFormat,
+	memoryOverviewResultSchema,
+	stepResultSchema,
+} from './prompting'
 
 export type GameTurnParams = {
 	template: GameTemplate
@@ -145,6 +152,61 @@ export async function runGameTurn(params: GameTurnParams) {
 
 	const payload = extractJsonPayload(response)
 	return stepResultSchema.parse(payload)
+}
+
+export type MemoryOverviewParams = {
+	template: GameTemplate
+	save: GameSave
+	apiKey?: string | null
+	model?: string | null
+	memoryTurnCount?: number | null
+	signal?: AbortSignal
+}
+
+export async function runMemoryOverview(params: MemoryOverviewParams) {
+	const resolvedKey =
+		params.apiKey?.trim() || import.meta.env.VITE_OPENAI_API_KEY
+	if (!resolvedKey) {
+		throw new Error(
+			'Add an OpenAI API key inside Settings to advance the story.'
+		)
+	}
+	const resolvedModel =
+		params.model?.trim() ||
+		import.meta.env.VITE_OPENAI_MODEL ||
+		'gpt-4.1-mini'
+	const client = new OpenAI({
+		apiKey: resolvedKey,
+		dangerouslyAllowBrowser: true,
+	})
+
+	const packet = buildMemoryOverviewPromptPacket({
+		template: params.template,
+		save: params.save,
+		memoryTurnCount: params.memoryTurnCount ?? undefined,
+	})
+	const responseFormat = buildMemoryOverviewResponseFormat(params.template)
+
+	const response = (await client.responses.create(
+		{
+			model: resolvedModel,
+			input: [
+				{ role: 'system', content: packet.system },
+				{ role: 'user', content: packet.user },
+			],
+			text: {
+				format: {
+					name: responseFormat.json_schema.name,
+					type: 'json_schema',
+					schema: responseFormat.json_schema.schema,
+				},
+			},
+		} as any,
+		{ signal: params.signal } as any
+	)) as any
+
+	const payload = extractJsonPayload(response)
+	return memoryOverviewResultSchema.parse(payload)
 }
 
 function extractJsonStringFieldPreview(jsonText: string, fieldName: string) {

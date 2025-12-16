@@ -8,6 +8,7 @@ export type SaveDraft = {
 	templateId: string
 	title: string
 	summary?: string
+	lastMemoryOverviewAtHistoryLen?: GameSave['lastMemoryOverviewAtHistoryLen']
 	sessionValueDefinitions?: GameSave['sessionValueDefinitions']
 	values: GameSave['values']
 	memories?: GameSave['memories']
@@ -42,6 +43,10 @@ export async function persistSave(draft: SaveDraft, existing?: GameSave) {
 		templateId: draft.templateId,
 		title: draft.title,
 		summary: draft.summary ?? base?.summary,
+		lastMemoryOverviewAtHistoryLen:
+			draft.lastMemoryOverviewAtHistoryLen ??
+			base?.lastMemoryOverviewAtHistoryLen ??
+			0,
 		sessionValueDefinitions:
 			draft.sessionValueDefinitions ??
 			base?.sessionValueDefinitions ??

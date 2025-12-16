@@ -64,8 +64,12 @@ export function SessionPanel({
 	settings?: AppSettings | null
 }) {
 	const reduceMotion = useReducedMotion()
-	const playerAction = useGameStore((state) => state.playerAction)
+	const playerActionGlobal = useGameStore((state) => state.playerAction)
 	const setPlayerAction = useGameStore((state) => state.setPlayerAction)
+	const [playerAction, setPlayerActionLocal] = useState('')
+	useEffect(() => {
+		setPlayerActionLocal(playerActionGlobal)
+	}, [playerActionGlobal, template?.id, save?.id])
 	const setAdvancing = useGameStore((state) => state.setAdvancing)
 	const setActiveSave = useGameStore((state) => state.setActiveSave)
 	const saveWriter = useSaveWriter()
@@ -203,6 +207,7 @@ export function SessionPanel({
 
 	useEffect(() => {
 		if (effectiveTurn.isSuccess) {
+			setPlayerActionLocal('')
 			setPlayerAction('')
 		}
 	}, [effectiveTurn.isSuccess, setPlayerAction])
@@ -309,6 +314,7 @@ export function SessionPanel({
 	}, [resolvedSave])
 
 	const handleSuggestion = (suggestion: string) => {
+		setPlayerActionLocal(suggestion)
 		setPlayerAction(suggestion)
 	}
 
@@ -321,6 +327,7 @@ export function SessionPanel({
 			return
 		}
 		const nextAction = playerAction.trim()
+		setPlayerAction(nextAction)
 		streamedNarrativeTextRef.current = ''
 		streamedNarrativePendingRef.current = ''
 		if (streamedNarrativeRafRef.current !== null) {
@@ -1116,9 +1123,10 @@ export function SessionPanel({
 					</label>
 					<textarea
 						value={playerAction}
-						onChange={(event) =>
-							setPlayerAction(event.currentTarget.value)
-						}
+						onChange={(event) => {
+							setPlayerActionLocal(event.currentTarget.value)
+						}}
+						onBlur={() => setPlayerAction(playerAction)}
 						placeholder="Steal the artifact, negotiate, or unleash magic…"
 						rows={3}
 						className="mt-3 w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-base focus:border-purple-400 focus:outline-none"

@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { GameSave, GameTemplate } from '../types/game'
-import { runGameTurn } from '../utils/openai'
+import { runGameTurn, runMemoryOverview } from '../utils/openai'
 import {
 	applyChangesToMemories,
 	applyChangesToValues,
@@ -54,7 +54,7 @@ export function useGameTurn(
 				save.values,
 				result.stateChanges
 			)
-			const updatedMemories = applyChangesToMemories(
+			let updatedMemories = applyChangesToMemories(
 				save.memories ?? [],
 				result.memoryChanges ?? []
 			)
@@ -72,14 +72,50 @@ export function useGameTurn(
 				createdAt: new Date().toISOString(),
 			}
 
+			const history = [...save.history, step]
+			const interval = Math.max(
+				1,
+				Math.min(10, settings?.memoryTurnCount ?? 4)
+			)
+			const historyLen = history.length
+			const lastCursor = save.lastMemoryOverviewAtHistoryLen ?? 0
+			const normalizedCursor = Math.min(lastCursor, historyLen)
+			const shouldRunOverview = historyLen - normalizedCursor >= interval
+			let nextCursor = normalizedCursor
+
+			if (shouldRunOverview) {
+				const overviewSave: GameSave = {
+					...save,
+					summary: result.summary ?? save.summary,
+					values: updatedValues,
+					memories: updatedMemories,
+					history,
+					lastMemoryOverviewAtHistoryLen: normalizedCursor,
+				}
+				const overview = await runMemoryOverview({
+					template,
+					save: overviewSave,
+					apiKey: settings?.apiKey,
+					model: settings?.model,
+					memoryTurnCount: interval,
+					signal: abortController.signal,
+				})
+				updatedMemories = applyChangesToMemories(
+					updatedMemories,
+					overview.memoryChanges ?? []
+				)
+				nextCursor = historyLen
+			}
+
 			const updatedSave = await persistSave({
 				id: save.id,
 				templateId: save.templateId,
 				title: save.title,
 				summary: result.summary ?? save.summary,
+				lastMemoryOverviewAtHistoryLen: nextCursor,
 				values: updatedValues,
 				memories: updatedMemories,
-				history: [...save.history, step],
+				history,
 			})
 
 			return { updatedSave, result }

@@ -152,6 +152,7 @@ export const saveSchema = z.object({
 	templateId: z.string(),
 	title: z.string(),
 	summary: z.string().optional(),
+	lastMemoryOverviewAtHistoryLen: z.number().int().nonnegative().default(0),
 	sessionValueDefinitions: z.array(valueDefinitionSchema).default([]),
 	values: z.record(z.string(), valuePayloadSchema),
 	memories: z.array(memoryEntrySchema).default([]),
