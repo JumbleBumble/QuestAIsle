@@ -1129,7 +1129,13 @@ export function SessionPanel({
 						onBlur={() => setPlayerAction(playerAction)}
 						placeholder="Steal the artifact, negotiate, or unleash magic…"
 						rows={3}
-						className="mt-3 w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-base focus:border-purple-400 focus:outline-none"
+						disabled={
+							!effectiveTemplate ||
+							!resolvedSave ||
+							effectiveTurn.isPending ||
+							!hasApiKey
+						}
+						className="mt-3 w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-base focus:border-purple-400 focus:outline-none disabled:opacity-40 disabled:cursor-not-allowed"
 					/>
 					{suggestionsToShow.length > 0 && (
 						<div className="mt-3 space-y-2">
@@ -1143,6 +1149,12 @@ export function SessionPanel({
 										type="button"
 										onClick={() =>
 											handleSuggestion(suggestion)
+										}
+										disabled={
+											!effectiveTemplate ||
+											!resolvedSave ||
+											effectiveTurn.isPending ||
+											!hasApiKey
 										}
 										initial={
 											reduceMotion
@@ -1173,7 +1185,7 @@ export function SessionPanel({
 												? undefined
 												: { scale: 0.99 }
 										}
-										className="rounded-2xl border border-white/10 bg-white/10 px-3 py-1 text-xs text-purple-50 transition hover:border-purple-400 hover:bg-purple-500/20"
+										className="rounded-2xl border border-white/10 bg-white/10 px-3 py-1 text-xs text-purple-50 transition hover:border-purple-400 hover:bg-purple-500/20 disabled:opacity-40 disabled:cursor-not-allowed"
 									>
 										{suggestion}
 									</motion.button>
@@ -1363,6 +1375,16 @@ export function SessionPanel({
 											'Continue the scene'}
 									</p>
 								</div>
+								{effectiveTemplate?.rollMode && (
+									<div className="flex items-center gap-2 rounded-2xl bg-linear-to-r from-fuchsia-700/30 to-indigo-700/30 px-4 py-1 shadow-inner backdrop-blur-sm">
+										<span className="text-lg font-bold text-fuchsia-200 drop-shadow">
+											🎲 D20
+										</span>
+										<span className="text-2xl font-extrabold text-white animate-pulse">
+											?
+										</span>
+									</div>
+								)}
 							</div>
 							<p className="mt-3 text-xs uppercase tracking-[0.3em] text-fuchsia-300">
 								AI Narrator
@@ -1445,6 +1467,16 @@ export function SessionPanel({
 										</p>
 									)}
 								</div>
+								{typeof entry.d20Roll === 'number' && (
+									<div className="flex items-center gap-2 rounded-2xl bg-linear-to-r from-fuchsia-700/30 to-indigo-700/30 px-4 py-1 shadow-inner backdrop-blur-sm">
+										<span className="text-lg font-bold text-fuchsia-200 drop-shadow">
+											🎲 D20
+										</span>
+										<span className="text-2xl font-extrabold text-white">
+											{entry.d20Roll}
+										</span>
+									</div>
+								)}
 								<div className="flex flex-wrap items-center gap-2">
 									{historyEditId === entry.id ? (
 										<>
@@ -1456,14 +1488,12 @@ export function SessionPanel({
 													)
 												}
 												whileHover={
-													reduceMotion ||
-													saveWriter.isPending
+													reduceMotion
 														? undefined
 														: { scale: 1.02 }
 												}
 												whileTap={
-													reduceMotion ||
-													saveWriter.isPending
+													reduceMotion
 														? undefined
 														: { scale: 0.99 }
 												}
@@ -1542,21 +1572,7 @@ export function SessionPanel({
 									)}
 								</div>
 							</div>
-							<p className="mt-3 text-xs uppercase tracking-[0.3em] text-fuchsia-300">
-								AI Narrator
-							</p>
-							{historyEditId === entry.id ? (
-								<textarea
-									value={historyEditNarrative}
-									onChange={(event) =>
-										setHistoryEditNarrative(
-											event.currentTarget.value
-										)
-									}
-									rows={4}
-									className="mt-1 w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-white focus:border-purple-400 focus:outline-none"
-								/>
-							) : (
+							{historyEditId !== entry.id && (
 								<div className="mt-1 text-base leading-relaxed text-white">
 									<ReactMarkdown remarkPlugins={[remarkGfm]}>
 										{entry.narrative}

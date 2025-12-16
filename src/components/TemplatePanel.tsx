@@ -22,8 +22,10 @@ import { useGameStore } from '../state/useGameStore'
 import { useSettingsQuery } from '../hooks/useSettings'
 import {
 	generateTemplateFromPrompt,
-	TemplateSuggestion,
+	TemplateSuggestion as BaseTemplateSuggestion,
 } from '../utils/openai'
+
+type TemplateSuggestion = BaseTemplateSuggestion & { rollMode: boolean }
 import { ToggleSwitch } from './ui/ToggleSwitch'
 
 const optionalFiniteNumber = z
@@ -50,61 +52,63 @@ const valueDefinitionFormSchema = z.object({
 type ValueDefinitionForm = z.infer<typeof valueDefinitionFormSchema>
 
 const templateFormSchema = z.object({
-	title: z.string().min(3, 'Template title is required'),
-	premise: z.string().optional(),
-	genre: z.string().optional(),
-	setting: z.string().optional(),
-	safety: z.string().optional(),
-	instructions: z.string().optional(),
-	values: z
-		.array(valueDefinitionFormSchema)
-		.min(1, 'Track at least one value'),
+       title: z.string().min(3, 'Template title is required'),
+       premise: z.string().optional(),
+       genre: z.string().optional(),
+       setting: z.string().optional(),
+       safety: z.string().optional(),
+       instructions: z.string().optional(),
+       rollMode: z.boolean().default(false),
+       values: z
+	       .array(valueDefinitionFormSchema)
+	       .min(1, 'Track at least one value'),
 })
 
 type TemplateFormValues = z.infer<typeof templateFormSchema>
 
 const defaultValues: TemplateFormValues = {
-	title: 'Neon Heist',
-	premise: 'Lead a crew of synth-runners across a techno-noir metropolis.',
-	genre: 'Sci-Fi Heist',
-	setting: 'Night City – neon canyons, rogue AIs, and megacorps.',
-	safety: 'No graphic gore. Keep stakes thrilling yet heroic.',
-	instructions:
-		'Balance tension with player agency. Offer cinematic cliffhangers.',
-	values: [
-		{
-			id: 'health',
-			label: 'Crew Vitality',
-			type: 'integer',
-			description: '0 = incapacitated, 10 = peak shape',
-			defaultValue: '8',
-			min: 0,
-			max: 10,
-		},
-		{
-			id: 'credits',
-			label: 'Crew Credits',
-			type: 'number',
-			description: 'Liquid funds for bribes and gear',
-			defaultValue: '1200',
-		},
-		{
-			id: 'heat',
-			label: 'Wanted Heat',
-			type: 'integer',
-			description: 'Represents police attention',
-			defaultValue: '2',
-			min: 0,
-		},
-		{
-			id: 'inventory',
-			label: 'Inventory',
-			type: 'array',
-			description: 'Key items currently held',
-			defaultValue: '["Mono-blade", "EMP charge"]',
-			maxLength: 12,
-		},
-	],
+       title: 'Neon Heist',
+       premise: 'Lead a crew of synth-runners across a techno-noir metropolis.',
+       genre: 'Sci-Fi Heist',
+       setting: 'Night City – neon canyons, rogue AIs, and megacorps.',
+       safety: 'No graphic gore. Keep stakes thrilling yet heroic.',
+       instructions:
+	       'Balance tension with player agency. Offer cinematic cliffhangers.',
+       rollMode: false,
+       values: [
+	       {
+		       id: 'health',
+		       label: 'Crew Vitality',
+		       type: 'integer',
+		       description: '0 = incapacitated, 10 = peak shape',
+		       defaultValue: '8',
+		       min: 0,
+		       max: 10,
+	       },
+	       {
+		       id: 'credits',
+		       label: 'Crew Credits',
+		       type: 'number',
+		       description: 'Liquid funds for bribes and gear',
+		       defaultValue: '1200',
+	       },
+	       {
+		       id: 'heat',
+		       label: 'Wanted Heat',
+		       type: 'integer',
+		       description: 'Represents police attention',
+		       defaultValue: '2',
+		       min: 0,
+	       },
+	       {
+		       id: 'inventory',
+		       label: 'Inventory',
+		       type: 'array',
+		       description: 'Key items currently held',
+		       defaultValue: '["Mono-blade", "EMP charge"]',
+		       maxLength: 12,
+	       },
+       ],
 }
 
 const PREMISE_PREVIEW_MAX_LEN = 180
@@ -193,51 +197,53 @@ function stringifyDefaultValue(value: GameValueDefinition['defaultValue']) {
 }
 
 function suggestionToFormValues(
-	suggestion: TemplateSuggestion
+       suggestion: TemplateSuggestion
 ): TemplateFormValues {
-	return {
-		title: suggestion.title,
-		premise: suggestion.premise ?? '',
-		genre: suggestion.genre ?? '',
-		setting: suggestion.setting ?? '',
-		safety: suggestion.safety ?? '',
-		instructions: suggestion.instructionBlocks?.join('\n\n') ?? '',
-		values: suggestion.values.map((value) => ({
-			id: value.id,
-			label: value.label,
-			type: value.type,
-			description: value.description ?? '',
-			defaultValue: stringifyDefaultValue(value.defaultValue),
-			min: value.min,
-			max: value.max,
-			maxLength: value.maxLength,
-		})),
-	}
+       return {
+	       title: suggestion.title,
+	       premise: suggestion.premise ?? '',
+	       genre: suggestion.genre ?? '',
+	       setting: suggestion.setting ?? '',
+	       safety: suggestion.safety ?? '',
+	       instructions: suggestion.instructionBlocks?.join('\n\n') ?? '',
+	       rollMode: suggestion.rollMode === undefined ? false : suggestion.rollMode,
+	       values: suggestion.values.map((value) => ({
+		       id: value.id,
+		       label: value.label,
+		       type: value.type,
+		       description: value.description ?? '',
+		       defaultValue: stringifyDefaultValue(value.defaultValue),
+		       min: value.min,
+		       max: value.max,
+		       maxLength: value.maxLength,
+	       })),
+       }
 }
 
 function templateToFormValues(
-	template: GameTemplate,
-	options?: { asCopy?: boolean }
+       template: GameTemplate,
+       options?: { asCopy?: boolean }
 ): TemplateFormValues {
-	const asCopy = options?.asCopy ?? true
-	return {
-		title: asCopy ? `${template.title} (Copy)` : template.title,
-		premise: template.premise ?? '',
-		genre: template.genre ?? '',
-		setting: template.setting ?? '',
-		safety: template.safety ?? '',
-		instructions: template.instructionBlocks?.join('\n\n') ?? '',
-		values: template.valueDefinitions.map((value) => ({
-			id: value.id,
-			label: value.label,
-			type: value.type,
-			description: value.description ?? '',
-			defaultValue: stringifyDefaultValue(value.defaultValue),
-			min: value.min,
-			max: value.max,
-			maxLength: value.maxLength,
-		})),
-	}
+       const asCopy = options?.asCopy ?? true
+       return {
+	       title: asCopy ? `${template.title} (Copy)` : template.title,
+	       premise: template.premise ?? '',
+	       genre: template.genre ?? '',
+	       setting: template.setting ?? '',
+	       safety: template.safety ?? '',
+	       instructions: template.instructionBlocks?.join('\n\n') ?? '',
+	       rollMode: template.rollMode === undefined ? false : template.rollMode,
+	       values: template.valueDefinitions.map((value) => ({
+		       id: value.id,
+		       label: value.label,
+		       type: value.type,
+		       description: value.description ?? '',
+		       defaultValue: stringifyDefaultValue(value.defaultValue),
+		       min: value.min,
+		       max: value.max,
+		       maxLength: value.maxLength,
+	       })),
+       }
 }
 
 export function TemplatePanel() {
@@ -257,7 +263,7 @@ export function TemplatePanel() {
 	)
 
 	const form = useForm<TemplateFormValues>({
-		resolver: zodResolver(templateFormSchema),
+		resolver: zodResolver(templateFormSchema) as any,
 		defaultValues,
 	})
 	const { fields, append, remove } = useFieldArray({
@@ -309,113 +315,115 @@ export function TemplatePanel() {
 	}
 
 	const buildSuggestionContextFromForm = (): TemplateSuggestion => {
-		const values = form.getValues()
-		return {
-			title: values.title,
-			premise: values.premise ?? '',
-			genre: values.genre ?? '',
-			setting: values.setting ?? '',
-			safety: values.safety ?? '',
-			instructionBlocks:
-				values.instructions
-					?.split('\n\n')
-					.map((block) => block.trim())
-					.filter(Boolean) ?? [],
-			values: (values.values ?? []).map((value) => {
-				const isNumeric =
-					value.type === 'integer' ||
-					value.type === 'float' ||
-					value.type === 'number'
-				const isArray = value.type === 'array'
-				return {
-					id: value.id,
-					label: value.label,
-					type: value.type,
-					description: value.description,
-					defaultValue: parseDefaultValue(value),
-					min:
-						isNumeric && Number.isFinite(value.min)
-							? value.min
-							: undefined,
-					max:
-						isNumeric && Number.isFinite(value.max)
-							? value.max
-							: undefined,
-					maxLength:
-						isArray && Number.isFinite(value.maxLength)
-							? value.maxLength
-							: undefined,
-				}
-			}),
-		}
+	       const values = form.getValues()
+	       return {
+		       title: values.title,
+		       premise: values.premise ?? '',
+		       genre: values.genre ?? '',
+		       setting: values.setting ?? '',
+		       safety: values.safety ?? '',
+		       instructionBlocks:
+			       values.instructions
+				       ?.split('\n\n')
+				       .map((block) => block.trim())
+				       .filter(Boolean) ?? [],
+		       rollMode: values.rollMode === undefined ? false : values.rollMode,
+		       values: (values.values ?? []).map((value) => {
+			       const isNumeric =
+				       value.type === 'integer' ||
+				       value.type === 'float' ||
+				       value.type === 'number'
+			       const isArray = value.type === 'array'
+			       return {
+				       id: value.id,
+				       label: value.label,
+				       type: value.type,
+				       description: value.description,
+				       defaultValue: parseDefaultValue(value),
+				       min:
+					       isNumeric && Number.isFinite(value.min)
+						       ? value.min
+						       : undefined,
+				       max:
+					       isNumeric && Number.isFinite(value.max)
+						       ? value.max
+						       : undefined,
+				       maxLength:
+					       isArray && Number.isFinite(value.maxLength)
+						       ? value.maxLength
+						       : undefined,
+			       }
+		       }),
+	       }
 	}
 
 	const handleGenerateTemplate = async () => {
-		const prompt = aiPrompt.trim()
-		if (!prompt) {
-			return
-		}
-		try {
-			const suggestion = await generator.mutateAsync({
-				prompt,
-				mode: aiMode,
-				baseTemplate:
-					aiMode === 'edit'
-						? buildSuggestionContextFromForm()
-						: undefined,
-			})
-			form.reset(suggestionToFormValues(suggestion))
-		} catch (error) {
-			//handled via mutation state
-		}
+	       const prompt = aiPrompt.trim()
+	       if (!prompt) {
+		       return
+	       }
+	       try {
+		       const suggestion = await generator.mutateAsync({
+			       prompt,
+			       mode: aiMode,
+			       baseTemplate:
+				       aiMode === 'edit'
+					       ? buildSuggestionContextFromForm()
+					       : undefined,
+		       })
+		       form.reset(suggestionToFormValues({ ...suggestion, rollMode: typeof suggestion.rollMode === 'boolean' ? suggestion.rollMode : false }))
+	       } catch (error) {
+               
+	       }
 	}
 
 	const handleSubmit = form.handleSubmit(async (values) => {
-		const draft: TemplateDraft = {
-			title: values.title,
-			premise: values.premise,
-			genre: values.genre,
-			setting: values.setting,
-			safety: values.safety,
-			instructionBlocks: values.instructions
-				?.split('\n\n')
-				.map((block: string) => block.trim())
-				.filter(Boolean),
-			valueDefinitions: values.values.map(
-				(value: ValueDefinitionForm) => {
-					const isNumeric =
-						value.type === 'integer' ||
-						value.type === 'float' ||
-						value.type === 'number'
-					const isArray = value.type === 'array'
-					return {
-						id: value.id,
-						label: value.label,
-						type: value.type,
-						description: value.description,
-						visibility: 'public',
-						defaultValue: parseDefaultValue(value),
-						min:
-							isNumeric && Number.isFinite(value.min)
-								? value.min
-								: undefined,
-						max:
-							isNumeric && Number.isFinite(value.max)
-								? value.max
-								: undefined,
-						maxLength:
-							isArray && Number.isFinite(value.maxLength)
-								? value.maxLength
-								: undefined,
-					}
-				}
-			),
-		}
+	       const draft: TemplateDraft = {
+		       title: values.title,
+		       premise: values.premise,
+		       genre: values.genre,
+		       setting: values.setting,
+		       safety: values.safety,
+		       instructionBlocks: values.instructions
+			       ?.split('\n\n')
+			       .map((block: string) => block.trim())
+			       .filter(Boolean),
+		       valueDefinitions: values.values.map(
+			       (value: ValueDefinitionForm) => {
+				       const isNumeric =
+					       value.type === 'integer' ||
+					       value.type === 'float' ||
+					       value.type === 'number'
+				       const isArray = value.type === 'array'
+				       return {
+					       id: value.id,
+					       label: value.label,
+					       type: value.type,
+					       description: value.description,
+					       visibility: 'public',
+					       defaultValue: parseDefaultValue(value),
+					       min:
+						       isNumeric && Number.isFinite(value.min)
+							       ? value.min
+							       : undefined,
+					       max:
+						       isNumeric && Number.isFinite(value.max)
+							       ? value.max
+							       : undefined,
+					       maxLength:
+						       isArray && Number.isFinite(value.maxLength)
+							       ? value.maxLength
+							       : undefined,
+				       }
+			       }
+		       ),
+		       rollMode: values.rollMode ?? false,
+	       }
 
-		const created = await saver.mutateAsync({ draft })
-		setActiveTemplate(created.slug)
-		form.reset(templateToFormValues(created, { asCopy: false }))
-		setActiveTab('manage')
+	       const created = await saver.mutateAsync({ draft })
+	       setActiveTemplate(created.slug)
+	       form.reset(templateToFormValues(created, { asCopy: false }))
+	       setActiveTab('manage')
 	})
 
 	const templates = templatesQuery.data ?? []
@@ -746,7 +754,16 @@ export function TemplatePanel() {
 						)}
 					</div>
 
-					<form onSubmit={handleSubmit} className="space-y-4">
+					       <form onSubmit={handleSubmit} className="space-y-4">
+						       <div className="flex items-center gap-3">
+								<ToggleSwitch
+									checked={form.watch('rollMode')}
+									onCheckedChange={(checked) => form.setValue('rollMode', checked)}
+									label="Enable D20 Roll Mode"
+									size="lg"
+								/>
+							       <span className="text-purple-100 text-xs">If enabled, each turn will include a random D20 roll for the AI to use in resolving actions.</span>
+						       </div>
 						<div className="grid gap-4 md:grid-cols-2">
 							{[
 								'title',

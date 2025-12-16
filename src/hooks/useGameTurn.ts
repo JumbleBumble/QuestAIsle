@@ -58,6 +58,10 @@ export function useGameTurn(
 				save.memories ?? [],
 				result.memoryChanges ?? []
 			)
+			let d20Roll: number | undefined = undefined
+			if (template.rollMode) {
+				d20Roll = Math.floor(Math.random() * 20) + 1
+			}
 			const step = {
 				id: crypto.randomUUID(),
 				playerAction: playerAction || 'Continue',
@@ -70,6 +74,7 @@ export function useGameTurn(
 				})),
 				playerOptions: result.playerOptions ?? [],
 				createdAt: new Date().toISOString(),
+				d20Roll,
 			}
 
 			const history = [...save.history, step]

@@ -22,6 +22,7 @@ export type TemplateDraft = {
 	safety?: string
 	instructionBlocks?: string[]
 	valueDefinitions: GameTemplate['valueDefinitions']
+	rollMode?: boolean
 }
 
 export async function listTemplates() {
@@ -55,6 +56,7 @@ export async function saveTemplate(
 		safety: draft.safety,
 		instructionBlocks: draft.instructionBlocks ?? [],
 		valueDefinitions: draft.valueDefinitions,
+		rollMode: draft.rollMode ?? false,
 		updatedAt: now,
 	}
 

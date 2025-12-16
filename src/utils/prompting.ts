@@ -256,31 +256,41 @@ export function buildPromptPacket(args: {
 		.join('\n')
 
 	errorIfMissing(template)
+	       let d20Roll: number | undefined = undefined
+			if (template.rollMode) {
+				d20Roll = Math.floor(Math.random() * 20) + 1
+			}
 
-	const systemPrompt = `You are an AI game master running the narrative "${
-		template.title
-	}".
-Setting: ${template.setting ?? 'Flexible'}
-Premise: ${template.premise ?? 'Player-driven'}
-Safety Guardrails: ${template.safety ?? 'Keep it safe, heroic, and PG-13.'}
-Never break character. Update tracked values only when required. Maintain a hidden long-term memory list of important facts, promises, NPC details, unresolved threats, and key discoveries. Only surface those memories indirectly through the narrative when relevant. Always obey the template instructions below.
-${template.instructionBlocks
-	.map((block, index) => `[Block ${index + 1}] ${block}`)
-	.join('\n\n')}`
+			const systemPrompt = `You are an AI game master running the narrative "${
+				template.title
+			}".
+	Setting: ${template.setting ?? 'Flexible'}
+	Premise: ${template.premise ?? 'Player-driven'}
+	Safety Guardrails: ${template.safety ?? 'Keep it safe, heroic, and PG-13.'}
+	Never break character. Update tracked values only when required. Maintain a hidden long-term memory list of important facts, promises, NPC details, unresolved threats, and key discoveries. Only surface those memories indirectly through the narrative when relevant. Always obey the template instructions below.
+	${template.instructionBlocks
+		.map((block, index) => `[Block ${index + 1}] ${block}`)
+		.join('\n\n')}
+	${
+		template.rollMode
+			? '\n\nD20 Roll Mode is ENABLED. Each turn, you will be provided a random D20 roll (1-20) to use in resolving the player action.'
+			: ''
+	}`
 
-	const userPrompt = `Player Action: ${
-		playerAction || 'Continue the adventure.'
-	}
-Current Values:\n${valueLines || 'No tracked values yet.'}
-Long-Term Memory (hidden, GM-only):\n${memoryLines || 'None yet.'}
-Recent Turns:\n${recentSteps || 'First turn — provide an exciting opener.'}
+			const userPrompt = `Player Action: ${
+				playerAction || 'Continue the adventure.'
+			}
+	Current Values:\n${valueLines || 'No tracked values yet.'}
+	Long-Term Memory (hidden, GM-only):\n${memoryLines || 'None yet.'}
+	Recent Turns:\n${recentSteps || 'First turn — provide an exciting opener.'}
+	${template.rollMode ? `\nD20 Roll: ${d20Roll}` : ''}
 
-Respond with a cinematic paragraph that advances the story, then describe every tracked value you changed.
+	Respond with a cinematic paragraph that advances the story, then describe every tracked value you changed.
 
-Also include memoryChanges to add/update/remove any long-term memory entries that should persist across future turns.
-Each memoryChanges item MUST include keys: op, id, text, tags. Use null for unused fields.`
+	Also include memoryChanges to add/update/remove any long-term memory entries that should persist across future turns.
+	Each memoryChanges item MUST include keys: op, id, text, tags. Use null for unused fields.`
 
-	return { system: systemPrompt, user: userPrompt }
+			return { system: systemPrompt, user: userPrompt }
 }
 
 function errorIfMissing(template: GameTemplate) {

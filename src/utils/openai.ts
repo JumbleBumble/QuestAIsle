@@ -470,39 +470,42 @@ function extractJsonObjectArrayFieldPreview(
 }
 
 const templateSuggestionSchema = z.object({
-	title: z.string().min(3),
-	premise: z.string().optional(),
-	genre: z.string().optional(),
-	setting: z.string().optional(),
-	safety: z.string().optional(),
-	instructionBlocks: z.array(z.string()).default([]),
-	values: z
-		.array(
-			z.object({
-				id: z.string().min(1),
-				label: z.string().min(1),
-				type: valueTypeSchema,
-				description: z.string().optional(),
-				defaultValue: valuePayloadSchema.optional(),
-				min: z.preprocess(
-					(value) => (value === null ? undefined : value),
-					z.number().finite().optional()
-				),
-				max: z.preprocess(
-					(value) => (value === null ? undefined : value),
-					z.number().finite().optional()
-				),
-				maxLength: z.preprocess(
-					(value) => (value === null ? undefined : value),
-					z.number().int().positive().optional()
-				),
-			})
-		)
-		.min(1)
-		.max(10),
+       title: z.string().min(3),
+       premise: z.string().optional(),
+       genre: z.string().optional(),
+       setting: z.string().optional(),
+       safety: z.string().optional(),
+       instructionBlocks: z.array(z.string()).default([]),
+       rollMode: z.boolean().optional(),
+       values: z
+	       .array(
+		       z.object({
+			       id: z.string().min(1),
+			       label: z.string().min(1),
+			       type: valueTypeSchema,
+			       description: z.string().optional(),
+			       defaultValue: valuePayloadSchema.optional(),
+			       min: z.preprocess(
+				       (value) => (value === null ? undefined : value),
+				       z.number().finite().optional()
+			       ),
+			       max: z.preprocess(
+				       (value) => (value === null ? undefined : value),
+				       z.number().finite().optional()
+			       ),
+			       maxLength: z.preprocess(
+				       (value) => (value === null ? undefined : value),
+				       z.number().int().positive().optional()
+			       ),
+		       })
+	       )
+	       .min(1)
+	       .max(10),
 })
 
-export type TemplateSuggestion = z.infer<typeof templateSuggestionSchema>
+export type TemplateSuggestion = z.infer<typeof templateSuggestionSchema> & {
+	rollMode?: boolean;
+}
 
 export type TemplateGeneratorParams = {
 	prompt: string

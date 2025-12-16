@@ -111,6 +111,7 @@ export const templateSchema = z.object({
 	safety: z.string().optional(),
 	instructionBlocks: z.array(z.string()).default([]),
 	valueDefinitions: z.array(valueDefinitionSchema),
+	rollMode: z.boolean().optional().default(false),
 	createdAt: z.string(),
 	updatedAt: z.string(),
 })
@@ -126,6 +127,7 @@ export const stepChangeSchema = z.object({
 
 export type GameValueChange = z.infer<typeof stepChangeSchema>
 
+
 export const stepSchema = z.object({
 	id: z.string(),
 	playerAction: z.string(),
@@ -133,6 +135,7 @@ export const stepSchema = z.object({
 	stateChanges: z.array(stepChangeSchema).default([]),
 	playerOptions: z.array(z.string()).default([]),
 	createdAt: z.string(),
+	d20Roll: z.number().int().min(1).max(20).optional(),
 })
 
 export type GameStep = z.infer<typeof stepSchema>
