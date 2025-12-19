@@ -77,73 +77,77 @@ export async function runGameTurn(params: GameTurnParams) {
 		let lastOptionsKey = ''
 		let lastStateChangesKey = ''
 		stream.on('response.output_text.delta', (event: any) => {
-			const snapshotText =
-				typeof event?.snapshot === 'string' ? event.snapshot : ''
+			try {
+				const snapshotText =
+					typeof event?.snapshot === 'string' ? event.snapshot : ''
 
-			if (params.onNarrativeText) {
-				const preview = extractJsonStringFieldPreview(
-					snapshotText,
-					'narrative'
-				)
-				if (preview !== null && preview !== lastNarrative) {
-					lastNarrative = preview
-					params.onNarrativeText(preview)
-				}
-			}
-
-			if (params.onPlayerOptions) {
-				const options = extractJsonStringArrayFieldPreview(
-					snapshotText,
-					'playerOptions'
-				)
-				if (options !== null) {
-					const trimmed = options
-						.map((value) => value.trim())
-						.filter(Boolean)
-					const key = JSON.stringify(trimmed)
-					if (key !== lastOptionsKey) {
-						lastOptionsKey = key
-						params.onPlayerOptions(trimmed)
-					}
-				}
-			}
-
-			if (params.onStateChanges) {
-				const changes = extractJsonObjectArrayFieldPreview(
-					snapshotText,
-					'stateChanges'
-				)
-				if (changes !== null) {
-					const normalized = changes
-						.map((item) => {
-							if (!item || typeof item !== 'object') return null
-							const valueId = (item as any).valueId
-							const next = (item as any).next
-							const reason = (item as any).reason
-							if (typeof valueId !== 'string' || !valueId)
-								return null
-							return {
-								valueId,
-								next,
-								reason:
-									typeof reason === 'string'
-										? reason
-										: undefined,
-							}
-						})
-						.filter(Boolean) as Array<{
-						valueId: string
-						next: unknown
-						reason?: string
-					}>
-					const key = JSON.stringify(
-						normalized.map((c) => [c.valueId, c.next])
+				if (params.onNarrativeText) {
+					const preview = extractJsonStringFieldPreview(
+						snapshotText,
+						'narrative'
 					)
-					if (key !== lastStateChangesKey) {
-						lastStateChangesKey = key
-						params.onStateChanges(normalized)
+					if (preview !== null && preview !== lastNarrative) {
+						lastNarrative = preview
+						params.onNarrativeText(preview)
 					}
 				}
+
+				if (params.onPlayerOptions) {
+					const options = extractJsonStringArrayFieldPreview(
+						snapshotText,
+						'playerOptions'
+					)
+					if (options !== null) {
+						const trimmed = options
+							.map((value) => value.trim())
+							.filter(Boolean)
+						const key = JSON.stringify(trimmed)
+						if (key !== lastOptionsKey) {
+							lastOptionsKey = key
+							params.onPlayerOptions(trimmed)
+						}
+					}
+				}
+
+				if (params.onStateChanges) {
+					const changes = extractJsonObjectArrayFieldPreview(
+						snapshotText,
+						'stateChanges'
+					)
+					if (changes !== null) {
+						const normalized = changes
+							.map((item) => {
+								if (!item || typeof item !== 'object') return null
+								const valueId = (item as any).valueId
+								const next = (item as any).next
+								const reason = (item as any).reason
+								if (typeof valueId !== 'string' || !valueId)
+									return null
+								return {
+									valueId,
+									next,
+									reason:
+										typeof reason === 'string'
+											? reason
+										: undefined,
+								}
+							})
+							.filter(Boolean) as Array<{
+							valueId: string
+							next: unknown
+							reason?: string
+						}>
+						const key = JSON.stringify(
+							normalized.map((c) => [c.valueId, c.next])
+						)
+						if (key !== lastStateChangesKey) {
+							lastStateChangesKey = key
+							params.onStateChanges(normalized)
+						}
+					}
+				}
+			} catch {
+				
 			}
 		})
 	}

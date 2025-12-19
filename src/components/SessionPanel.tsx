@@ -101,6 +101,8 @@ export function SessionPanel({
 	const [streamedStateChanges, setStreamedStateChanges] = useState<
 		Array<{ valueId: string; next: unknown }>
 	>([])
+	const [turnPhase, setTurnPhase] = useState<		'turn' | 'memoryOverview' | 'persist' | null
+	>(null)
 	const streamedNarrativeTextRef = useRef('')
 	const streamedNarrativePendingRef = useRef('')
 	const streamedNarrativeRafRef = useRef<number | null>(null)
@@ -184,6 +186,7 @@ export function SessionPanel({
 			onNarrativeText: handleStreamNarrative,
 			onPlayerOptions: handleStreamPlayerOptions,
 			onStateChanges: handleStreamStateChanges,
+			onPhase: (phase) => setTurnPhase(phase),
 		}
 	)
 
@@ -202,15 +205,20 @@ export function SessionPanel({
 			setStreamedNarrativeChunks([])
 			setStreamedPlayerOptions([])
 			setStreamedStateChanges([])
+			setTurnPhase(null)
 		}
 	}, [effectiveTurn.isPending])
 
 	useEffect(() => {
 		if (effectiveTurn.isSuccess) {
+			if (effectiveTurn.data?.updatedSave) {
+				setLocalSaveOverride(effectiveTurn.data.updatedSave)
+			}
+			setHistoryPage(0)
 			setPlayerActionLocal('')
 			setPlayerAction('')
 		}
-	}, [effectiveTurn.isSuccess, setPlayerAction])
+	}, [effectiveTurn.isSuccess, effectiveTurn.data?.updatedSave, setPlayerAction])
 
 	const stringifyValue = (value: unknown) => {
 		if (value === undefined || value === null) {
@@ -1386,6 +1394,14 @@ export function SessionPanel({
 									</div>
 								)}
 							</div>
+							{turnPhase === 'memoryOverview' && (
+								<div className="mt-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-xs text-purple-100/80 backdrop-blur">
+									<span className="font-semibold text-purple-100">
+										Updating long-term memory…
+									</span>{' '}
+									This run periodically asks the AI to refresh a compact memory overview so future turns stay consistent. This step can add a few extra seconds.
+								</div>
+							)}
 							<p className="mt-3 text-xs uppercase tracking-[0.3em] text-fuchsia-300">
 								AI Narrator
 							</p>

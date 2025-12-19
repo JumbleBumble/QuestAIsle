@@ -20,6 +20,7 @@ export type RunStreaming = {
 	onStateChanges?: (
 		changes: Array<{ valueId: string; next: unknown; reason?: string }>
 	) => void
+	onPhase?: (phase: 'turn' | 'memoryOverview' | 'persist') => void
 }
 
 export function useGameTurn(
@@ -36,19 +37,55 @@ export function useGameTurn(
 					'Select a template and save before advancing the story.'
 				)
 			}
+			try {
+				streaming?.onPhase?.('turn')
+			} catch {
+				
+			}
 			const abortController = new AbortController()
-			const result = await runGameTurn({
-				template,
-				save,
-				playerAction,
-				apiKey: settings?.apiKey,
-				model: settings?.model,
-				memoryTurnCount: settings?.memoryTurnCount ?? undefined,
-				onNarrativeText: streaming?.onNarrativeText,
-				onPlayerOptions: streaming?.onPlayerOptions,
-				onStateChanges: streaming?.onStateChanges,
-				signal: abortController.signal,
-			})
+			const runWithTimeout = async <T,>(
+				promise: Promise<T>,
+				timeoutMs: number
+			) => {
+				let timeoutId: ReturnType<typeof setTimeout> | undefined
+				try {
+					return await Promise.race([
+						promise,
+						new Promise<T>((_, reject) => {
+							timeoutId = setTimeout(() => {
+								try {
+									abortController.abort()
+								} catch {
+									
+								}
+								reject(
+									new Error('Turn timed out. Please try again.')
+								)
+							}, timeoutMs)
+						}),
+					])
+				} finally {
+					if (timeoutId) {
+						clearTimeout(timeoutId)
+					}
+				}
+			}
+
+			const result = await runWithTimeout(
+				runGameTurn({
+					template,
+					save,
+					playerAction,
+					apiKey: settings?.apiKey,
+					model: settings?.model,
+					memoryTurnCount: settings?.memoryTurnCount ?? undefined,
+					onNarrativeText: streaming?.onNarrativeText,
+					onPlayerOptions: streaming?.onPlayerOptions,
+					onStateChanges: streaming?.onStateChanges,
+					signal: abortController.signal,
+				}),
+				120_000
+			)
 			const updatedValues = applyChangesToValues(
 				template,
 				save.values,
@@ -89,6 +126,11 @@ export function useGameTurn(
 			let nextCursor = normalizedCursor
 
 			if (shouldRunOverview) {
+				try {
+					streaming?.onPhase?.('memoryOverview')
+				} catch {
+					
+				}
 				const overviewSave: GameSave = {
 					...save,
 					summary: result.summary ?? save.summary,
@@ -97,19 +139,46 @@ export function useGameTurn(
 					history,
 					lastMemoryOverviewAtHistoryLen: normalizedCursor,
 				}
-				const overview = await runMemoryOverview({
-					template,
-					save: overviewSave,
-					apiKey: settings?.apiKey,
-					model: settings?.model,
-					memoryTurnCount: interval,
-					signal: abortController.signal,
-				})
-				updatedMemories = applyChangesToMemories(
-					updatedMemories,
-					overview.memoryChanges ?? []
-				)
-				nextCursor = historyLen
+				const runOverviewOnce = () =>
+					runMemoryOverview({
+						template,
+						save: overviewSave,
+						apiKey: settings?.apiKey,
+						model: settings?.model,
+						memoryTurnCount: interval,
+						signal: abortController.signal,
+					})
+
+				let overviewResult:
+					| Awaited<ReturnType<typeof runMemoryOverview>>
+					| null = null
+				try {
+					overviewResult = await runOverviewOnce()
+				} catch (error) {
+					if (abortController.signal.aborted) {
+						throw error
+					}
+					await new Promise((resolve) => setTimeout(resolve, 750))
+					try {
+						overviewResult = await runOverviewOnce()
+					} catch {
+						overviewResult = null
+					}
+				}
+
+				if (overviewResult) {
+					updatedMemories = applyChangesToMemories(
+						updatedMemories,
+						overviewResult.memoryChanges ?? []
+					)
+					nextCursor = historyLen
+				}
+			}
+
+			try {
+				streaming?.onPhase?.('persist')
+			} catch {
+				
 			}
 
 			const updatedSave = await persistSave({

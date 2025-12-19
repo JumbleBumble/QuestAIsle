@@ -754,16 +754,22 @@ export function TemplatePanel() {
 						)}
 					</div>
 
-					       <form onSubmit={handleSubmit} className="space-y-4">
-						       <div className="flex items-center gap-3">
-								<ToggleSwitch
-									checked={form.watch('rollMode')}
-									onCheckedChange={(checked) => form.setValue('rollMode', checked)}
-									label="Enable D20 Roll Mode"
-									size="lg"
-								/>
-							       <span className="text-purple-100 text-xs">If enabled, each turn will include a random D20 roll for the AI to use in resolving actions.</span>
-						       </div>
+					<form onSubmit={handleSubmit} className="space-y-4">
+						<div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+							<ToggleSwitch
+								checked={form.watch('rollMode')}
+								onCheckedChange={(checked) =>
+									form.setValue('rollMode', checked)
+								}
+								label="Enable D20 Roll Mode"
+								size="md"
+								className="shrink-0"
+							/>
+							<span className="text-purple-100 text-xs leading-relaxed whitespace-normal">
+								If enabled, each turn will include a random D20
+								roll for the AI to use in resolving actions.
+							</span>
+						</div>
 						<div className="grid gap-4 md:grid-cols-2">
 							{[
 								'title',
